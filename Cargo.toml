@@ -1,6 +1,6 @@
 [package]
 name = "cadmus"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 license = "MIT"
 description = "CTranslate2-based Whisper transcription, synchronous Rust core, optional napi-rs Node surface."
@@ -46,6 +46,10 @@ napi-derive = { version = "3.5.5", optional = true }
 # Audio pipeline (PLAN_audio_pipeline). Lookup date 2026-05-08.
 symphonia = { version = "=0.5.4", default-features = false, features = ["mp3", "wav", "flac", "pcm"] }
 rubato    = "=0.16.2"
+
+# HTTP client for HuggingFace model downloads (PLAN_model_storage).
+# Lookup date 2026-05-08. Pure-Rust TLS via rustls; no system OpenSSL.
+ureq = { version = "=3.3.0", default-features = false, features = ["rustls", "platform-verifier"] }
 
 [build-dependencies]
 napi-build = "2.3.1"

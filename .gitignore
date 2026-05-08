@@ -33,6 +33,7 @@ CLAUDE.md
 
 # Rust build artifacts
 target/
+/target/cadmus-test-cache/
 
 # Node
 node_modules/

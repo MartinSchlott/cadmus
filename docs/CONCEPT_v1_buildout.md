@@ -17,7 +17,7 @@ Numbered decisions. Once a plan starts, the decisions it builds on are frozen fo
 - **D3.** Node bridge offloads each operation via napi-rs `AsyncTask` to the libuv threadpool. Bridge does no business logic.
 - **D4.** Memory model: `CadmusModel` holds the inner `ct2rs::Whisper` as `Arc<Whisper>` plus an atomic "freed" sentinel. No `Mutex` on the inference path: ct2rs explicitly declares the underlying FFI struct `Send + Sync` (`ct2rs/src/sys/whisper.rs:524–525`: `unsafe impl Send for ffi::Whisper`, `unsafe impl Sync for ffi::Whisper`), so concurrent `generate` calls are safe at the type level. `free()` is non-blocking and does not abort in-flight transcriptions — reference-counted deferred release. Value-over-abort.
 - **D5.** Audio pipeline: `symphonia` (decode) → in-house downmix → `rubato` (resample) → `Vec<f32>` at 16 kHz mono in `[-1, 1]`. No FFmpeg.
-- **D6.** Model format: directory (CTranslate2 layout, e.g. `Systran/faster-whisper-base/` containing `model.bin`, `config.json`, `tokenizer.json`, `vocabulary.txt`). A minimal per-model file list (just enough for the downloader and presence-detection of one model — the `tiny` entry needed by the inference test) is established in `PLAN_model_storage`. The authoritative full file list — including `preprocessor_config.json` and any model-specific extras across all 17 catalog entries — is finalised in `PLAN_public_api` against the actual Hugging Face repositories and stored in `ModelInfo::files` (D15).
+- **D6.** Model format: directory (CTranslate2 layout, e.g. `Systran/faster-whisper-base/` containing `model.bin`, `config.json`, `tokenizer.json`, `vocabulary.txt`). A minimal per-model file list (just enough for the downloader and presence-detection of one model — the `tiny` entry needed by the inference test) is established in `PLAN_model_storage`. PLAN_model_storage's implementation also surfaced that the CT2-converted Faster-Whisper repos do not ship `preprocessor_config.json` (which `ct2rs::Whisper::new` requires); the file is sourced per-model from the matching `openai/whisper-*` repo, the canonical workflow documented in ct2rs's `examples/whisper.rs`. The crate-internal `ModelEntry` therefore carries per-file `(repo, file)` pairs (`FileSpec`) rather than a single repo plus a flat filename list. The authoritative full file list across all 17 catalog entries — and the public `ModelInfo` shape that exposes it — is finalised in `PLAN_public_api` (D15).
 
 ### Platform, packaging, and build
 
@@ -188,7 +188,9 @@ This concept supersedes those: D22 (single crate + feature flag), D23 (root `pac
 ├── src/
 │   ├── lib.rs                        # public Rust API + #[cfg(feature = "napi")] re-exports
 │   ├── napi.rs                       # napi bridge (only compiled with --features napi)
-│   ├── model.rs, transcribe.rs, decode.rs, segments.rs, error.rs, helpers/
+│   ├── decode.rs                     # added in Plan 2 (audio pipeline; symphonia + rubato)
+│   ├── storage.rs                    # added in Plan 3 (HuggingFace downloader, ureq + rustls)
+│   ├── model.rs, transcribe.rs, segments.rs, error.rs, helpers/
 ├── fixtures/
 │   ├── eins-zwei-drei.mp3
 │   ├── eins-zwei-drei.wav            # added in Plan 2 (sample rate ≠ 16 kHz, exercises resampler)
