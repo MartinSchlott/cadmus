@@ -34,18 +34,18 @@ Numbered decisions. Once a plan starts, the decisions it builds on are frozen fo
 - **D26.** Test runner: Node's built-in `node --test`, not Vitest. One dev-dependency dropped relative to the earlier draft.
 - **D27.** **Explicit packaging boundaries.** Single repo root produces two artifacts; each has its own whitelist so the crates.io tarball and the npm tarball never bleed into each other.
 
-  **`Cargo.toml` declares `[package].include`** (allowlist — anything not listed is excluded from the published crate):
+  **`Cargo.toml` declares `[package].include`** (allowlist — anything not listed is excluded from the published crate). Patterns are root-anchored with leading `/` because cargo's `include` uses gitignore-glob semantics; unanchored entries like `LICENSE` would otherwise pull `node_modules/**/LICENSE` into the published tarball (PLAN_skeleton implementation finding):
   ```toml
   include = [
-      "Cargo.toml",
-      "Cargo.lock",
-      "build.rs",
-      "src/**/*.rs",
-      "tests/**/*.rs",
-      "fixtures/**",
-      "LICENSE",
-      "LICENSE-THIRD-PARTY",
-      "README.md",
+      "/Cargo.toml",
+      "/Cargo.lock",
+      "/build.rs",
+      "/src/**/*.rs",
+      "/tests/**/*.rs",
+      "/fixtures/**",
+      "/LICENSE",
+      "/LICENSE-THIRD-PARTY",
+      "/README.md",
   ]
   ```
   Everything else at the repo root — `package.json`, `tsconfig.json`, `index.ts`, `types.ts`, `index.js`, `dist/`, `cadmus.*.node`, `tests/**/*.mjs`, `node_modules/`, `docs/` — is excluded from `cargo publish` by virtue of not being listed.
@@ -144,13 +144,16 @@ Numbered decisions. Once a plan starts, the decisions it builds on are frozen fo
 
 Linear chain. Each plan completes (Implementation → Validation → Doc Update → Archive) before the next begins.
 
+**Linux x86_64 deferral (Human override, recorded during PLAN_skeleton implementation):** All Plans 1–5 are executed on macOS only. Linux x86_64 builds, Linux `.node` commits, and Linux-side verification are deferred until the library is code-complete on macOS. A follow-up plan after Plan 5 picks up the Linux side in one shot — `cargo build --features napi`, `napi build`, `npm test` on the Linux host, plus the Linux-half of every earlier plan's verification grid. Until then, every "Done when" entry below that mentions Linux is interpreted as macOS-only; the Linux plumbing in `Cargo.toml` (per-target ct2rs features), `index.ts` (platform dispatch), and `package.json.files` (`cadmus.linux-x64-gnu.node` allowlist entry) stays wired so the deferred plan only has to run, not author.
+
 | # | Plan file | Scope | Done when |
 |---|---|---|---|
-| 1 | `PLAN_skeleton.md` | Single Cargo crate `cadmus` with `[lib] crate-type = ["cdylib", "lib"]` and `napi` feature flag (D22). `package.json` at repo root with `napi` build script (D23). `LICENSE` (MIT). Edition `2024`. Stub crate exports a single `version()` function (Rust + napi-feature-gated). `tsconfig.json`, `index.ts`/`types.ts` skeletons. Fixture `fixtures/eins-zwei-drei.mp3` committed. ct2rs is **already a dependency** (Variante B from prior discussion) with the per-platform feature subset from D8 — so the build exercises CTranslate2's CMake build immediately, not only later. No logic beyond `version()`. | On macOS: `cargo build --release --features napi`, `napi build --release --platform`, `npm pack` all succeed. On Linux: same. Both `cadmus.<triple>.node` files exist locally after their respective platform's build. `cargo test` (no tests yet) and `node --test tests/` (one trivial version test) both green on each host. |
-| 2 | `PLAN_audio_pipeline.md` | symphonia decode + downmix + rubato resample → `Vec<f32>` at 16 kHz mono in `[-1, 1]`. Crate-internal API (`pub(crate)` or visible only via `#[cfg(test)]`). Fixture-based tests with WAV/MP3/FLAC variants of the test phrase. | `cargo test -p cadmus` passes the audio pipeline tests; the fixture decodes to the expected sample count and rate on both platforms. |
-| 3 | `PLAN_inference_core.md` | `ct2rs` integration as **crate-internal** machinery only — no public loading API yet. Internal Whisper-handle wrapper implementing D4 directly (`Arc<Whisper>` + atomic freed sentinel; no mutex). Whisper `<\|t\|>` timestamp-token parser → `Segment[]`. Crate-internal fixture-transcription test under `#[cfg(test)]` — lives inside `src/`, not in a separate `tests/` directory, because no public surface exists yet. | `cargo test` produces a transcript containing "eins" from the fixture, on both platforms. The crate exports nothing user-callable that loads or transcribes — those land in Plan 4. |
-| 4 | `PLAN_model_helpers.md` | Public Rust API surface in one shot: `Cadmus`, `CadmusConfig`, `CadmusModel`, `ModelRef` (D11/D12/D18). Static catalog (D14), `cadmus.list_available_models`, `cadmus.find_model`, `cadmus.download_model` with progress + cooperative cancel, `cached` detection (D19), `cadmus.load_model(ModelRef)`. Free one-shot `transcribe(audio, &Path, opts)` and free `version()`. Public Rust integration test in `tests/` exercising the full surface against the fixture. | Catalog tests green; `cadmus.download_model("tiny", ...)` populates a temp dir; `cadmus.list_available_models()` returns 17 entries with correct `cached` flags; `tests/` end-to-end transcription via `Cadmus::load_model` green on both platforms. |
-| 5 | `PLAN_napi_surface.md` | `napi`-feature-gated AsyncTask wrappers in the **same crate**. TypeScript wrapper at the repo root (`index.ts`, `types.ts`) including the `ModelRef` discriminated union. Replace the trivial Plan-1 `version()` JS test with a `node --test` suite covering: version, catalog, find, load+transcribe, free-after-free, free-during-inflight, concurrent transcribe. **Both `.node` binaries built locally** (developer runs `napi build` on macOS, then on Linux) and committed to the repo. | `npm test` (which runs `node --test tests/`) green on macOS using the committed `cadmus.darwin-arm64.node`, and green on Linux using the committed `cadmus.linux-x64-gnu.node`. `npm pack` produces a tarball that contains both binaries and works on a fresh `npm install`. |
+| 1 | `PLAN_skeleton.md` | Single Cargo crate `cadmus` with `[lib] crate-type = ["cdylib", "lib"]` and `napi` feature flag (D22). `package.json` at repo root with `napi` build script (D23). `LICENSE` (MIT). Edition `2024`. Stub crate exports a single `version()` function (Rust + napi-feature-gated). `tsconfig.json`, `index.ts`/`types.ts` skeletons. Fixture `fixtures/eins-zwei-drei.mp3` committed. ct2rs is **already a dependency** (Variante B from prior discussion) with the per-platform feature subset from D8 — so the build exercises CTranslate2's CMake build immediately, not only later. No logic beyond `version()`. | On macOS: `cargo build --release --features napi`, `napi build --release --platform`, `npm pack` all succeed. `cargo test` (`1 passed`, the inline `version_returns_three_string_fields` unit test) and `node --test tests/*.test.mjs` (one trivial version test) both green. `cadmus.darwin-arm64.node` committed. Linux deferred per the override above. |
+| 2 | `PLAN_audio_pipeline.md` | symphonia decode + downmix + rubato resample → `Vec<f32>` at 16 kHz mono in `[-1, 1]`. Crate-internal API (`pub(crate)` or visible only via `#[cfg(test)]`). Fixture-based tests with WAV/MP3/FLAC variants of the test phrase. | `cargo test -p cadmus` passes the audio pipeline tests on macOS; the fixture decodes to the expected sample count and rate. |
+| 3 | `PLAN_inference_core.md` | `ct2rs` integration as **crate-internal** machinery only — no public loading API yet. Internal Whisper-handle wrapper implementing D4 directly (`Arc<Whisper>` + atomic freed sentinel; no mutex). Whisper `<\|t\|>` timestamp-token parser → `Segment[]`. Crate-internal fixture-transcription test under `#[cfg(test)]` — lives inside `src/`, not in a separate `tests/` directory, because no public surface exists yet. | `cargo test` produces a transcript containing "eins" from the fixture on macOS. The crate exports nothing user-callable that loads or transcribes — those land in Plan 4. |
+| 4 | `PLAN_model_helpers.md` | Public Rust API surface in one shot: `Cadmus`, `CadmusConfig`, `CadmusModel`, `ModelRef` (D11/D12/D18). Static catalog (D14), `cadmus.list_available_models`, `cadmus.find_model`, `cadmus.download_model` with progress + cooperative cancel, `cached` detection (D19), `cadmus.load_model(ModelRef)`. Free one-shot `transcribe(audio, &Path, opts)` and free `version()`. Public Rust integration test in `tests/` exercising the full surface against the fixture. | Catalog tests green; `cadmus.download_model("tiny", ...)` populates a temp dir; `cadmus.list_available_models()` returns 17 entries with correct `cached` flags; `tests/` end-to-end transcription via `Cadmus::load_model` green on macOS. |
+| 5 | `PLAN_napi_surface.md` | `napi`-feature-gated AsyncTask wrappers in the **same crate**. TypeScript wrapper at the repo root (`index.ts`, `types.ts`) including the `ModelRef` discriminated union. Replace the trivial Plan-1 `version()` JS test with a `node --test` suite covering: version, catalog, find, load+transcribe, free-after-free, free-during-inflight, concurrent transcribe. macOS `.node` built locally and committed. Linux `.node` is **not** produced here — it is deferred to the Linux follow-up plan per the override above. | `npm test` (which runs `node --test tests/*.test.mjs`) green on macOS using the committed `cadmus.darwin-arm64.node`. `npm pack` produces a tarball that contains the macOS binary and works on a fresh `npm install` on macOS. |
+| 6 | `PLAN_linux_followup.md` *(deferred — to be authored once Plan 5 closes)* | Build and verify the entire library stack on `x86_64-unknown-linux-gnu`. Run Phase B Steps 12–17 of PLAN_skeleton plus the Linux-half of every Plan 2–5 verification. Commit `cadmus.linux-x64-gnu.node`. | All cargo + npm verifications green on Linux; both `.node` binaries present in HEAD; `npm pack --dry-run` lists both binaries. |
 
 ---
 
@@ -247,11 +250,13 @@ Plans determine the exact signatures; the snippets above sketch intent only.
 
 No separate Plan 7. Releases are a short manual sequence. Documented here so it lives next to the decisions that shape it.
 
+The runbook below describes the **target** state with both `.node` binaries committed. Until the Linux follow-up plan closes, releases ship the macOS binary only and skip step 3.
+
 When releasing v0.X.Y:
 
 1. Bump `version` in `Cargo.toml` and `package.json`. Commit.
 2. **On macOS** (`aarch64-apple-darwin`): `napi build --release --platform`. Verify `npm test` green. Commit the produced `cadmus.darwin-arm64.node`.
-3. **On Linux** (`x86_64-unknown-linux-gnu`): pull the version-bump commit. `napi build --release --platform`. Verify `npm test` green. Commit the produced `cadmus.linux-x64-gnu.node`.
+3. **On Linux** (`x86_64-unknown-linux-gnu`): pull the version-bump commit. `napi build --release --platform`. Verify `npm test` green. Commit the produced `cadmus.linux-x64-gnu.node`. *Skipped while the Linux follow-up plan is still pending.*
 4. Push the branch (with both binary commits) and tag `v0.X.Y`.
 5. **Verify packaging boundaries** (D27) before any publish:
    - `cargo package --list` — output must contain only Rust source, `Cargo.toml`/`Cargo.lock`, `build.rs`, `tests/**/*.rs`, `fixtures/**`, and licence/README files. No `.node` files, no `package.json`, no `index.ts`, no `tests/**/*.mjs`.
