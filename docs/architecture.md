@@ -84,7 +84,9 @@ A Cargo workspace. Two Rust crates, one npm package, one fixture.
 │   └── package.json              # @ai-inquisitor/cadmus
 │
 ├── fixtures/
-│   └── eins-zwei-drei.mp3        # 5-second German test audio
+│   ├── eins-zwei-drei.mp3        # ≈ 2.9 s synthesized German numerals @ 22 050 Hz
+│   ├── eins-zwei-drei.wav        # same recording, PCM-16 @ 44 100 Hz
+│   └── eins-zwei-drei.flac       # same recording, FLAC @ 48 000 Hz
 │
 ├── tests/
 │   ├── rust/                     # uses cadmus crate directly
@@ -221,11 +223,11 @@ CMake and Visual Studio Build Tools 2022 are present on `windows-latest` runners
 
 ## 8. Test Strategy
 
-### 8.1 The Fixture
+### 8.1 The Fixtures
 
-`fixtures/eins-zwei-drei.mp3` — 5 seconds of spoken German "eins zwei drei". Checked into the repository.
+`fixtures/eins-zwei-drei.{mp3,wav,flac}` — ≈ 2.9 s of synthesized German numerals ("eins, zwei, drei, vier, fünf") in three containers at three sample rates (MP3 22 050 Hz, WAV PCM-16 44 100 Hz, FLAC 48 000 Hz), all derived from the same master so cross-format decoded length agrees within ~2 048 samples. The three rates ensure rubato's resampler is exercised on every test run regardless of which fixture is loaded. Checked into the repository.
 
-Every CI run downloads `Systran/faster-whisper-tiny` (the smallest CTranslate2 Whisper model, ~75 MB), transcribes the fixture, and asserts the result contains the expected words. This is the end-to-end smoke test: it exercises symphonia decoding, downmix, rubato resampling, ct2rs's mel + tokenizer + inference path, our segment parser, and (in the Node leg) napi-rs marshalling on every push.
+Every CI run downloads `Systran/faster-whisper-tiny` (the smallest CTranslate2 Whisper model, ~75 MB), transcribes the MP3 fixture, and asserts the result contains the expected words ("eins", "zwei", "drei" survive even if the longer numerals are missed by the tiny model). This is the end-to-end smoke test: it exercises symphonia decoding, downmix, rubato resampling, ct2rs's mel + tokenizer + inference path, our segment parser, and (in the Node leg) napi-rs marshalling on every push.
 
 ### 8.2 Layers
 

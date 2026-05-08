@@ -106,7 +106,6 @@ fn decode_interleaved(bytes: &[u8]) -> Result<(Vec<f32>, u32, u16), AudioError> 
                 buf.copy_interleaved_ref(decoded);
                 interleaved.extend_from_slice(buf.samples());
             }
-            Err(SymphoniaError::DecodeError(_)) => continue,
             Err(e) => return Err(AudioError::Decode(format!("decode: {e}"))),
         }
     }
@@ -260,6 +259,24 @@ mod tests {
         assert!(
             (0.85..=1.0).contains(&peak),
             "peak amplitude {peak} outside [0.85, 1.0]"
+        );
+    }
+
+    #[test]
+    fn corrupt_audio_returns_decode_error() {
+        // FLAC header + metadata blocks stay intact so probe succeeds; every
+        // byte from offset 4096 onward is overwritten with 0xFF so frame syncs
+        // and CRCs fail. With the contract from definition.md §3 ("truly
+        // corrupt audio raises Decode") this must surface AudioError::Decode
+        // instead of silently yielding partial PCM.
+        let mut corrupt = FLAC.to_vec();
+        for b in &mut corrupt[4096..] {
+            *b = 0xFF;
+        }
+        let result = decode_to_pcm16k(&corrupt);
+        assert!(
+            matches!(result, Err(AudioError::Decode(_))),
+            "expected AudioError::Decode, got {result:?}"
         );
     }
 

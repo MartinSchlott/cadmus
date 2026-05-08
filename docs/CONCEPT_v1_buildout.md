@@ -189,7 +189,9 @@ This concept supersedes those: D22 (single crate + feature flag), D23 (root `pac
 │   ├── napi.rs                       # napi bridge (only compiled with --features napi)
 │   ├── model.rs, transcribe.rs, decode.rs, segments.rs, error.rs, helpers/
 ├── fixtures/
-│   └── eins-zwei-drei.mp3
+│   ├── eins-zwei-drei.mp3
+│   ├── eins-zwei-drei.wav            # added in Plan 2 (sample rate ≠ 16 kHz, exercises resampler)
+│   └── eins-zwei-drei.flac           # added in Plan 2 (sample rate ≠ 16 kHz, exercises resampler)
 ├── tests/                            # Rust integration tests + node --test suite
 │   ├── *.rs
 │   └── *.mjs
