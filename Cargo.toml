@@ -1,0 +1,47 @@
+[package]
+name = "cadmus"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "CTranslate2-based Whisper transcription, synchronous Rust core, optional napi-rs Node surface."
+readme = "README.md"
+# D27 allowlist. Patterns are root-anchored (leading `/`) — cargo's `include`
+# uses gitignore-glob semantics, and unanchored entries like `LICENSE`
+# would otherwise pull `node_modules/**/LICENSE` into the published tarball.
+# Anchoring is the smallest deviation from D27's literal list that satisfies
+# the plan's "no node_modules/" verification requirement.
+include = [
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/build.rs",
+    "/src/**/*.rs",
+    "/tests/**/*.rs",
+    "/fixtures/**",
+    "/LICENSE",
+    "/LICENSE-THIRD-PARTY",
+    "/README.md",
+]
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+default = []
+napi = ["dep:napi", "dep:napi-derive"]
+
+# Per-platform ct2rs feature subset (D8) — Pattern B from PLAN_skeleton.md
+# (per-target dependency syntax with disjoint feature lists). Lookup date 2026-05-08.
+# macOS: Accelerate framework + ruy. Linux: oneMKL prebuild + dnnl + openmp.
+# CUDA / cuDNN / cuda-dynamic-loading explicitly excluded (D7).
+[target.'cfg(target_os = "macos")'.dependencies]
+ct2rs = { version = "=0.9.18", default-features = false, features = ["whisper", "accelerate", "ruy"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ct2rs = { version = "=0.9.18", default-features = false, features = ["whisper", "mkl", "dnnl", "openmp-runtime-comp"] }
+
+[dependencies]
+napi = { version = "3.8.6", default-features = false, features = ["napi8"], optional = true }
+napi-derive = { version = "3.5.5", optional = true }
+
+[build-dependencies]
+napi-build = "2.3.1"

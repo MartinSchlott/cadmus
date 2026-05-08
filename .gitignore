@@ -17,3 +17,30 @@ CLAUDE.md
 
 .DS_Store
 */.DS_Store
+.agents/skills/cortex-md/SKILL.md
+.agents/skills/cortex-md/audit.md
+.agents/skills/cortex-md/examples/monorepo.md
+.agents/skills/cortex-md/examples/static.md
+.agents/skills/cortex-md/examples/webapp-systemd.md
+.agents/skills/cortex-md/sections.md
+.agents/skills/documentation-philosophy/SKILL.md
+.agents/skills/markdown-kanban/SKILL.md
+.agents/skills/markdown-kanban/references/KANBAN_MARKDOWN_FORMAT.md
+.agents/skills/markdown-kanban/templates/backlog.kanban.md
+.agents/skills/markdown-kanban/templates/bug.kanban.md
+.agents/skills/react-guidelines/SKILL.md
+.agents/skills/typescript-guidelines/SKILL.md
+
+# Rust build artifacts
+target/
+
+# Node
+node_modules/
+
+# tsc-emitted artifacts at the repo root (D27 keeps these out of cargo's tarball;
+# we also do not commit them — the npm tarball ships them after `npm run build`).
+/index.js
+/index.d.ts
+# napi-rs auto-generated type-def file — redirected here so it does not collide
+# with tsc's `/index.d.ts`. Not shipped (not in package.json `files`).
+/napi-binding.d.ts
