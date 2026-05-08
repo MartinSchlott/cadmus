@@ -1,0 +1,11 @@
+This software incorporates third-party code under the following licenses.
+
+─────────────────────────────────────────────
+symphonia  —  https://github.com/pdeljanov/Symphonia
+License:   Mozilla Public License Version 2.0
+Version:   0.5.4
+
+See https://www.mozilla.org/en-US/MPL/2.0/ for the full license text.
+The MPL-2.0 applies to symphonia source files only; modifications to those
+files (none in this project) would be subject to MPL terms.
+─────────────────────────────────────────────

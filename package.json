@@ -15,6 +15,7 @@
     "cadmus.darwin-arm64.node",
     "cadmus.linux-x64-gnu.node",
     "LICENSE",
+    "LICENSE-THIRD-PARTY",
     "README.md"
   ],
   "napi": {

@@ -43,5 +43,9 @@ ct2rs = { version = "=0.9.18", default-features = false, features = ["whisper", 
 napi = { version = "3.8.6", default-features = false, features = ["napi8"], optional = true }
 napi-derive = { version = "3.5.5", optional = true }
 
+# Audio pipeline (PLAN_audio_pipeline). Lookup date 2026-05-08.
+symphonia = { version = "=0.5.4", default-features = false, features = ["mp3", "wav", "flac", "pcm"] }
+rubato    = "=0.16.2"
+
 [build-dependencies]
 napi-build = "2.3.1"

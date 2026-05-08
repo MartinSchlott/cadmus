@@ -1,3 +1,5 @@
+mod decode;
+
 pub struct Version {
     pub cadmus: String,
     pub ct2rs: String,
