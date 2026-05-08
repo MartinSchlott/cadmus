@@ -48,7 +48,7 @@ mod tests {
     fn version_returns_three_string_fields() {
         let v = version();
         assert_eq!(v.cadmus, env!("CARGO_PKG_VERSION"));
-        assert!(v.cadmus.starts_with("0.2.0"));
+        assert!(v.cadmus.starts_with("0.3.0"));
         let _: String = v.ct2rs;
         let _: String = v.ctranslate2;
     }
