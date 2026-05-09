@@ -42,6 +42,8 @@ node_modules/
 # we also do not commit them — the npm tarball ships them after `npm run build`).
 /index.js
 /index.d.ts
+/types.js
+/types.d.ts
 # napi-rs auto-generated type-def file — redirected here so it does not collide
 # with tsc's `/index.d.ts`. Not shipped (not in package.json `files`).
 /napi-binding.d.ts

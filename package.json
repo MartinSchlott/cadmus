@@ -1,6 +1,6 @@
 {
   "name": "@ai-inquisitor/cadmus",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "CTranslate2-based Whisper transcription with prebuilt napi-rs binaries.",
   "license": "MIT",
   "type": "module",
@@ -12,6 +12,8 @@
   "files": [
     "index.js",
     "index.d.ts",
+    "types.js",
+    "types.d.ts",
     "cadmus.darwin-arm64.node",
     "cadmus.linux-x64-gnu.node",
     "LICENSE",
@@ -29,7 +31,7 @@
     "build:napi": "napi build --release --platform --no-js --dts napi-binding.d.ts --features napi",
     "build:ts": "tsc",
     "build": "npm run build:napi && npm run build:ts",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test --test-concurrency=1 tests/*.test.mjs"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.6.2",

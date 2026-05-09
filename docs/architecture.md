@@ -236,13 +236,15 @@ Every CI run downloads `Systran/faster-whisper-tiny` (the smallest CTranslate2 W
 - `segments`: synthetic Whisper output strings with `<|t|>` tokens → expected `Segment[]`
 - `download`: mock HTTP, verify directory structure written, progress callback invoked, cancellation flag respected
 
-**Node.js integration tests** (`tests/node/`, Vitest):
-- `version()` shape
-- `listAvailableModels()` non-empty with required fields
-- `findModel` finds a temp-dir model directory
-- `loadModel` + `transcribe(fixture)` returns text containing "eins"
-- `free()` after `free()` throws typed error
-- Two concurrent `transcribe()` calls on one context produce correct results without corruption
+**Node.js integration tests** (`tests/`, `node --test` with `--test-concurrency=1`) **[Plan 6 — actual]**:
+- `version.test.mjs` — `version()` returns three string fields, all non-empty.
+- `wav_helper.test.mjs` — `tests/_helpers/wav.mjs::padWavWithSilence` produces a transcribable WAV (round-trips eins/zwei/drei markers through `tiny`).
+- `catalog.test.mjs` — 17 entries, 12 whisper + 5 distil_whisper, every entry has populated metadata, `.en` entries have `multilingual === false`, `findModel('nonexistent')` returns `null`, `loadModel({ name: 'nonexistent' })` rejects with `code === 'UnknownModel'`, `loadModel({ name, path })` and `loadModel({})` reject with `code === 'InvalidArgument'`.
+- `transcribe.test.mjs` — handle path: `loadModel({ name: 'tiny' }).transcribe(mp3, { language: 'de' })` returns segments with the eins/zwei/drei markers, then `model.free()` plus a fresh `transcribe` rejects with `code === 'AlreadyFreed'`. One-shot path: `transcribe(mp3, modelPath, { language: 'de' })` returns the same content.
+- `lifecycle.test.mjs` — three lifecycle invariants across the napi/AsyncTask boundary: free-after-free idempotency, free-during-inflight (30 s synthesised WAV, in-flight Promise resolves while next call rejects with `AlreadyFreed`), concurrent `Promise.all([transcribe, transcribe])`.
+- `download.test.mjs` — happy-path `downloadModel('tiny', { onProgress })` against a fresh `mkdtempSync` cache: callback fires with monotonic `received` and constant `total`; `findModel('tiny')` after returns the same directory.
+
+The Rust D4 invariants (free-during-inflight, concurrent transcribe) are also covered directly in `src/inference.rs` unit tests; the JS-side variants verify napi marshalling preserves them across the libuv boundary. Vitest is **not** used (D26).
 
 ### 8.3 Explicitly Not Tested
 
@@ -322,13 +324,24 @@ pub struct Version {
 
 ### 9.2 npm package (`@ai-inquisitor/cadmus`)
 
-```typescript
-function loadModel(modelPath: string, options?: LoadModelOptions): Promise<CadmusModel>
+**[Plan 6 — actual surface, supersedes the pre-Concept narrative below.]** Concept decisions D11/D12/D14/D15/D18 (factory handle, `ModelRef`, 17-entry catalog with extended `ModelInfo`) and Plan 6's napi bridge define the shipped TypeScript API. The earlier free-function shape in this section is left as historical context; Concept Closeout will rewrite it.
 
-interface LoadModelOptions {
-  threads?: number              // default: logical CPU count
-  computeType?: 'auto' | 'int8' | 'int8_float16' | 'float16' | 'float32'   // default: 'auto'
+```typescript
+class Cadmus {
+  constructor(config: CadmusConfig)
+  listAvailableModels(): ModelInfo[]
+  findModel(name: string): string | null
+  downloadModel(name: string, options?: DownloadModelOptions): Promise<string>
+  loadModel(modelRef: ModelRef, options?: LoadModelOptions): Promise<CadmusModel>
 }
+
+interface CadmusConfig {
+  modelCache: string             // explicit cache directory (D11)
+}
+
+type ModelRef =                   // D18 — discriminated union
+  | { name: string }              // resolved against the configured cache
+  | { path: string }              // direct path to a model directory
 
 interface CadmusModel {
   transcribe(audio: Buffer, options?: TranscribeOptions): Promise<TranscriptResult>
@@ -337,51 +350,68 @@ interface CadmusModel {
 
 function transcribe(
   audio: Buffer,
-  modelPath: string,
+  modelPath: string,              // path string, not ModelRef (D12)
   options?: TranscribeOptions
 ): Promise<TranscriptResult>
 
+function version(): Version
+
+interface Version {
+  cadmus: string
+  ct2rs: string
+  ctranslate2: string
+}
+
+interface LoadModelOptions {
+  threads?: number                 // default: ct2rs picks
+  computeType?: ComputeType        // default: 'auto' (D16)
+}
+type ComputeType = 'auto' | 'int8' | 'int8_float16' | 'float16' | 'float32'
+
 interface TranscribeOptions {
-  language?: string             // BCP-47 ('de', 'en', ...) or 'auto'
+  language?: string                // BCP-47; absent → ct2rs detection
   beamSize?: number
-  threads?: number
+  // `threads` intentionally absent — accepted deviation in bug.kanban.md
+}
+
+interface DownloadModelOptions {
+  onProgress?: (received: number, total: number) => void
+  signal?: AbortSignal
 }
 
 interface TranscriptResult {
-  text:     string
+  text: string
   language: string
   segments: Segment[]
 }
 
 interface Segment {
-  start: number   // seconds
-  end:   number   // seconds
-  text:  string
+  start: number                    // seconds
+  end: number
+  text: string
 }
 
-function listAvailableModels(): ModelInfo[]
+type ModelFamily = 'whisper' | 'distil_whisper'
 
-interface ModelInfo {
-  name:        string
-  sizeBytes:   number
+interface ModelInfo {              // D15
+  name: string
   description: string
-  files:       string[]   // expected files inside the model directory
+  sizeBytes: number
+  family: ModelFamily
+  multilingual: boolean
+  cached: boolean                  // computed at call time (D19)
+  repo: string
+  files: string[]
 }
 
-function downloadModel(
-  name:    string,
-  destDir: string,
-  options?: DownloadModelOptions
-): Promise<string>     // resolves to the absolute model directory path
-
-interface DownloadModelOptions {
-  onProgress?: (bytesReceived: number, totalBytes: number) => void
-  signal?:     AbortSignal
+// Type-only narrowing — runtime is a plain Error with `code` set.
+interface CadmusError extends Error {
+  code: string                     // 'Load' | 'Decode' | 'Resample' | 'Inference'
+                                   // | 'Poisoned' | 'AlreadyFreed' | 'UnknownModel'
+                                   // | 'Download' | 'Io' | 'InvalidArgument'
 }
-
-function findModel(name: string, searchPaths?: string[]): string | null
-
-function version(): { ctranslate2: string; ct2rs: string; cadmus: string }
 ```
 
-**Full export list:** `loadModel`, `CadmusModel`, `LoadModelOptions`, `transcribe`, `TranscribeOptions`, `TranscriptResult`, `Segment`, `listAvailableModels`, `ModelInfo`, `downloadModel`, `DownloadModelOptions`, `findModel`, `version`. Nothing else. Internal Rust types and CTranslate2 types are not re-exported.
+**Full export list:** `Cadmus`, `CadmusModel`, `transcribe`, `version`. Plus type re-exports: `CadmusConfig`, `CadmusError`, `ComputeType`, `DownloadModelOptions`, `LoadModelOptions`, `ModelFamily`, `ModelInfo`, `ModelRef`, `Segment`, `TranscribeOptions`, `TranscriptResult`, `Version`. Nothing else. Internal Rust types and CTranslate2 types are not re-exported.
+
+**Layout:** `index.ts` does platform dispatch (`darwin-arm64` and `linux-x64-gnu` per D8) and re-exports the napi-rs class verbatim. Hand-written types live in `types.ts`. The auto-generated `napi-binding.d.ts` is internal; consumers see `index.d.ts` (which inlines via `export type ... from './types.js'`).

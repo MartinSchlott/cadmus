@@ -43,6 +43,8 @@ These are constraints stated as features. Violating them breaks the product prem
 The same concepts exist in Rust and JavaScript with idiomatic naming. Exact signatures live in [architecture.md](architecture.md). This section defines *what exists*, not *how it spells*.
 
 > **Plan 5 deltas vs. this section** — flagged inline below with `[Plan 5]` markers. The Concept ([CONCEPT_v1_buildout.md](CONCEPT_v1_buildout.md)) overrides definition.md in three places (D11/D12 for cache & `find_model`, D14/D15 for the catalog & `ModelInfo`, D18 for `ModelRef`). Two `severity: accepted` deviations are recorded in [bug.kanban.md](bug.kanban.md). Full reconciliation happens at Concept Closeout — this section is left as the v1-pre-Concept narrative for traceability.
+>
+> **Plan 6 deltas vs. this section** — flagged inline below with `[Plan 6]` markers. PLAN_napi_surface materialised the napi-rs bridge and the root TypeScript surface (`@ai-inquisitor/cadmus`): `Cadmus`/`CadmusModel` JS classes, `transcribe()` one-shot, `version()`, plus `DownloadModelOptions` / `LoadModelOptions` / `TranscribeOptions` / `ModelRef` / `CadmusError` exposed as TS types. The JS error contract (`err.code` carries the variant name) is now end-to-end live: synchronous throws (`InvalidArgument`, `AlreadyFreed`, `UnknownModel`) and async-task rejections (`Load`, `Decode`, `Resample`, `Inference`, `Download`, `Io`, `Poisoned`) all surface their codes. Concept Closeout reconciles the inventory.
 
 **Execution model.** The Rust core API is **blocking**: functions return their result directly. Async Rust callers wrap calls in their runtime's blocking-task primitive (`tokio::task::spawn_blocking` or equivalent). The Node bridge offloads each call to the libuv threadpool via napi-rs `AsyncTask` and returns a `Promise`. The core crate carries no executor dependency — runtime choice is the caller's, not the library's.
 
@@ -93,7 +95,7 @@ A single error type with discriminated variants:
 | `Download` | **[Plan 5]** HuggingFace download failed (cancelled, HTTP error, network, IO). The `DownloadError` four-variant detail is collapsed into one string for surface narrowness |
 | `Io` | **[Plan 5]** Filesystem error on the cache directory (cannot create, cannot read) |
 
-The npm side surfaces these as `Error` instances with a `code` field carrying the variant name.
+The npm side surfaces these as `Error` instances with a `code` field carrying the variant name. **[Plan 6: implemented.]** Synchronous throws (`AlreadyFreed`, `UnknownModel` via `loadModel({ name })`, `InvalidArgument` for ModelRef shape and unknown `computeType`) propagate the typed code via `JsError<String>::throw_into` plus a `PendingException` sentinel. AsyncTask rejections (`Load`, `Decode`, `Resample`, `Inference`, `Download`, `Io`, `Poisoned`) propagate the typed code by building the JS Error directly with `napi_create_error` in `Task::reject` and packing it into the `napi::Error::maybe_raw` slot, so the framework's deferred-reject path forwards our error verbatim.
 
 ## 5. Behavioral Invariants
 
@@ -101,9 +103,9 @@ Things callers must rely on. Things implementers must not break.
 
 **`free()` is mandatory on the JS side.** A context that goes out of scope in JS without `free()` leaks the native inference instance for the lifetime of the process. There is no V8 finalizer-based release. On the Rust side, `Drop` runs automatically at scope exit; calling `.free()` explicitly is also valid and equivalent.
 
-**`transcribe()` after `free()` throws synchronously** with the `AlreadyFreed` error variant. It does not return a rejected promise — the failure is observable before any async work begins.
+**`transcribe()` after `free()` throws synchronously** with the `AlreadyFreed` error variant. It does not return a rejected promise — the failure is observable before any async work begins. **[Plan 6: enforced by a mirror `freed` flag on the napi-side `CadmusModel` checked before `AsyncTask` construction; `tests/lifecycle.test.mjs` covers free-after-free.]**
 
-**`free()` does not abort in-flight transcriptions.** A `transcribe()` Promise created *before* `free()` resolves normally with its result; `free()` is non-blocking and the underlying instance is released only after all in-flight calls finish. New `transcribe()` calls submitted *after* `free()` always throw `AlreadyFreed`. This is a deliberate value-over-abort choice — see [architecture.md §5](architecture.md) for the mechanism (reference-counted deferred release).
+**`free()` does not abort in-flight transcriptions.** A `transcribe()` Promise created *before* `free()` resolves normally with its result; `free()` is non-blocking and the underlying instance is released only after all in-flight calls finish. New `transcribe()` calls submitted *after* `free()` always throw `AlreadyFreed`. This is a deliberate value-over-abort choice — see [architecture.md §5](architecture.md) for the mechanism (reference-counted deferred release). **[Plan 6: re-verified across the AsyncTask boundary — `tests/lifecycle.test.mjs` runs a 30 s synthesised WAV, calls `free()` mid-flight, and asserts the in-flight Promise resolves with non-empty segments while the next call rejects with `code === 'AlreadyFreed'`.]**
 
 **Audio format is detected from content, not from filename or caller hints.** A `.mp3` file containing WAV data transcribes correctly. Truly corrupt audio raises `Decode`.
 
@@ -117,7 +119,9 @@ Things callers must rely on. Things implementers must not break.
 
 **`findModel` returns the first match.** Search order is: explicit `searchPaths`, then `CADMUS_MODEL_DIR` env var, then `~/.cache/cadmus/models/`. Duplicate names: first wins, deterministically. **[Plan 5: D11 supersedes — `cadmus.find_model(name)` looks up only inside the configured `model_cache`, returns `Some(dir)` iff every catalog file is present with size > 0 (D19), `None` otherwise. No env, no magic paths, no `searchPaths` argument.]**
 
-**Concurrent `transcribe()` on the same context is safe.** ct2rs/CTranslate2 manage internal batching across replicas. Whether external synchronization is required is verified during the first implementation plan; if needed, `CadmusModel` adds an internal lock without changing the public contract.
+**Concurrent `transcribe()` on the same context is safe.** ct2rs/CTranslate2 manage internal batching across replicas. Whether external synchronization is required is verified during the first implementation plan; if needed, `CadmusModel` adds an internal lock without changing the public contract. **[Plan 6: re-verified across the AsyncTask boundary by `tests/lifecycle.test.mjs` — `Promise.all([transcribe, transcribe])` resolves both with valid segments.]**
+
+**`downloadModel` progress is monotonic against a constant total.** A single `downloadModel(name, { onProgress })` call delivers `(received, total)` events where `received` is non-decreasing and `total` stays equal to the catalog's `sizeBytes` for the model across every call. **[Plan 6: enforced in the napi bridge — the underlying `storage::download` reports per-file progress with per-file totals; the bridge accumulates committed-file bytes and clamps against the catalog total before forwarding to the JS callback.]**
 
 **Default `threads` equals logical CPU count.** Test environments running multiple contexts simultaneously must lower this explicitly to avoid memory pressure.
 
