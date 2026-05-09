@@ -1,6 +1,8 @@
 use std::fs::{self, File};
 use std::io::{BufWriter, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub(crate) struct FileSpec {
@@ -32,18 +34,14 @@ impl std::fmt::Display for DownloadError {
 }
 impl std::error::Error for DownloadError {}
 
+#[cfg(test)]
 pub(crate) const TINY: ModelEntry = ModelEntry {
-    files: &[
-        FileSpec { repo: "Systran/faster-whisper-tiny", file: "model.bin" },
-        FileSpec { repo: "Systran/faster-whisper-tiny", file: "config.json" },
-        FileSpec { repo: "Systran/faster-whisper-tiny", file: "tokenizer.json" },
-        FileSpec { repo: "Systran/faster-whisper-tiny", file: "vocabulary.txt" },
-        FileSpec { repo: "openai/whisper-tiny",         file: "preprocessor_config.json" },
-    ],
+    files: crate::catalog::FILES_TINY,
 };
 
 const CHUNK_SIZE: usize = 64 * 1024;
 
+#[cfg(test)]
 pub(crate) fn test_cache_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/cadmus-test-cache")
 }

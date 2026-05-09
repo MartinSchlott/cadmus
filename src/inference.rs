@@ -31,6 +31,12 @@ pub(crate) struct Segment {
     pub text: String,
 }
 
+#[derive(Debug)]
+pub(crate) struct InferenceOutput {
+    pub segments: Vec<Segment>,
+    pub detected_language: Option<String>,
+}
+
 /// Internal Whisper handle. Implements D4: `Arc<Whisper>` plus an atomic
 /// `freed` sentinel. The `Mutex<Option<...>>` exists only so `free()` can
 /// swap the owning Arc out atomically — the critical section spans
@@ -43,7 +49,14 @@ pub(crate) struct InferenceHandle {
 
 impl InferenceHandle {
     pub(crate) fn new(model_dir: &Path) -> Result<Self, InferenceError> {
-        let whisper = Whisper::new(model_dir, Config::default())
+        Self::new_with_config(model_dir, Config::default())
+    }
+
+    pub(crate) fn new_with_config(
+        model_dir: &Path,
+        config: Config,
+    ) -> Result<Self, InferenceError> {
+        let whisper = Whisper::new(model_dir, config)
             .map_err(|e| InferenceError::Load(e.to_string()))?;
         Ok(Self {
             inner: Mutex::new(Some(Arc::new(whisper))),
@@ -51,11 +64,22 @@ impl InferenceHandle {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn transcribe(
         &self,
         samples: &[f32],
         language: Option<&str>,
     ) -> Result<Vec<Segment>, InferenceError> {
+        self.transcribe_with_options(samples, language, &WhisperOptions::default())
+            .map(|out| out.segments)
+    }
+
+    pub(crate) fn transcribe_with_options(
+        &self,
+        samples: &[f32],
+        language: Option<&str>,
+        options: &WhisperOptions,
+    ) -> Result<InferenceOutput, InferenceError> {
         if self.freed.load(Ordering::SeqCst) {
             return Err(InferenceError::AlreadyFreed);
         }
@@ -69,10 +93,12 @@ impl InferenceHandle {
         };
 
         let chunks = local
-            .generate(samples, language, true, &WhisperOptions::default())
+            .generate(samples, language, true, options)
             .map_err(|e| InferenceError::Generate(e.to_string()))?;
 
-        Ok(parse_segments(&chunks))
+        let detected_language = detect_language_from_chunks(&chunks);
+        let segments = parse_segments(&chunks);
+        Ok(InferenceOutput { segments, detected_language })
     }
 
     pub(crate) fn free(&self) {
@@ -157,6 +183,41 @@ fn parse_one_chunk(chunk: &str, offset: f32, out: &mut Vec<Segment>) {
             text: pending_text,
         });
     }
+}
+
+/// Scan chunks for Whisper's `<|xx|>` language control token. ct2rs runs
+/// detection internally when `language = None` and emits the detected code
+/// as the first control token of the first chunk. The token body is a 2-
+/// or 3-character ASCII-lowercase ISO 639 code (e.g. `<|de|>`, `<|en|>`).
+/// Other control tokens (`<|transcribe|>`, `<|translate|>`,
+/// `<|notimestamps|>`, `<|startoftranscript|>`, `<|endoftext|>`) exceed
+/// 3 chars; timestamp tokens (`<|0.00|>`) contain `.` and digits.
+pub(crate) fn detect_language_from_chunks(chunks: &[String]) -> Option<String> {
+    let first = chunks.first()?;
+    let bytes = first.as_bytes();
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'<' && bytes[i + 1] == b'|' {
+            if let Some(end) = find_token_end(bytes, i + 2) {
+                let tok = &first[i + 2..end];
+                if is_language_token(tok) {
+                    return Some(tok.to_string());
+                }
+                i = end + 2;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+fn is_language_token(t: &str) -> bool {
+    let len = t.len();
+    if len < 2 || len > 3 {
+        return false;
+    }
+    t.chars().all(|c| c.is_ascii_lowercase())
 }
 
 fn find_token_end(bytes: &[u8], from: usize) -> Option<usize> {
@@ -385,5 +446,23 @@ mod tests {
         let segs = parse_segments(&chunks);
         assert_eq!(segs.len(), 1);
         assert!(segs[0].text.contains("ok"));
+    }
+
+    #[test]
+    fn detect_language_from_chunks_finds_two_letter_token() {
+        let chunks = vec!["<|de|><|transcribe|><|0.00|> hallo welt<|2.50|>".to_string()];
+        assert_eq!(detect_language_from_chunks(&chunks), Some("de".to_string()));
+    }
+
+    #[test]
+    fn detect_language_from_chunks_skips_control_and_timestamp_tokens() {
+        let chunks = vec!["<|transcribe|><|0.00|> just text<|1.00|>".to_string()];
+        assert_eq!(detect_language_from_chunks(&chunks), None);
+    }
+
+    #[test]
+    fn detect_language_from_chunks_empty_input_returns_none() {
+        let chunks: Vec<String> = vec![];
+        assert_eq!(detect_language_from_chunks(&chunks), None);
     }
 }

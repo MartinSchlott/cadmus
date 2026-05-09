@@ -36,6 +36,31 @@ Track the ct2rs upstream; once a public version surface lands, switch
 
 PLAN_skeleton.md R1 Fallback B.
 
+### Surface ct2rs internally-detected language token
+id: yeuv5u80rh47llblsi17afd3
+priority: low
+
+`ct2rs 0.9.18`'s high-level `Whisper::generate(samples, None, ...)`
+runs language detection internally
+(`ct2rs/src/whisper.rs:131-170`) but drops the detected `lang_token`
+after embedding it into the prompt prefix. The generated chunks
+returned to the caller contain only model-output tokens, not the
+prefix — so the detected language is unreachable from the public
+ct2rs surface.
+
+Track ct2rs upstream for either:
+- An overload that returns the detected language alongside the
+  chunks, or
+- `Whisper::detect_language` exposed on the high-level wrapper
+  (currently only on `sys::Whisper`, which requires self-built mel
+  spectrograms).
+
+When upstream lands either, drop the `severity: accepted` card in
+`docs/bug.kanban.md` ("Detected language not surfaced when
+TranscribeOptions::language == None") and rely on the existing
+`detect_language_from_chunks` helper (already in
+`src/inference.rs`).
+
 ### HTTP Range / resume on `download_model`
 id: flna2x9g3w082f7ubsr06uod
 priority: low

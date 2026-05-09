@@ -42,6 +42,8 @@ These are constraints stated as features. Violating them breaks the product prem
 
 The same concepts exist in Rust and JavaScript with idiomatic naming. Exact signatures live in [architecture.md](architecture.md). This section defines *what exists*, not *how it spells*.
 
+> **Plan 5 deltas vs. this section** — flagged inline below with `[Plan 5]` markers. The Concept ([CONCEPT_v1_buildout.md](CONCEPT_v1_buildout.md)) overrides definition.md in three places (D11/D12 for cache & `find_model`, D14/D15 for the catalog & `ModelInfo`, D18 for `ModelRef`). Two `severity: accepted` deviations are recorded in [bug.kanban.md](bug.kanban.md). Full reconciliation happens at Concept Closeout — this section is left as the v1-pre-Concept narrative for traceability.
+
 **Execution model.** The Rust core API is **blocking**: functions return their result directly. Async Rust callers wrap calls in their runtime's blocking-task primitive (`tokio::task::spawn_blocking` or equivalent). The Node bridge offloads each call to the libuv threadpool via napi-rs `AsyncTask` and returns a `Promise`. The core crate carries no executor dependency — runtime choice is the caller's, not the library's.
 
 ### 4.1 Operations
@@ -52,10 +54,12 @@ The same concepts exist in Rust and JavaScript with idiomatic naming. Exact sign
 | `transcribe` (on context) | Decode audio bytes and run inference; returns a transcript result |
 | `transcribe` (one-shot) | Convenience: load → transcribe → free. For scripts and tests, not high-throughput callers |
 | `free` (on context) | Release the underlying inference instance. Mandatory on the JS side; on the Rust side `Drop` runs automatically and `free()` is also available |
-| `list_available_models` / `listAvailableModels` | Static catalogue of known CTranslate2 Whisper models with size and description |
-| `download_model` / `downloadModel` | Fetch a known CTranslate2 Whisper model from the official faster-whisper repositories on Hugging Face (`Systran/faster-whisper-*`) with optional progress + cancellation |
-| `find_model` / `findModel` | Locate a model directory across explicit paths, env var, and standard cache dir |
+| `list_available_models` / `listAvailableModels` | Static catalogue of known CTranslate2 Whisper models with size and description **[Plan 5: now a method on the `Cadmus` handle (D12); 17 fixed entries (D14)]** |
+| `download_model` / `downloadModel` | Fetch a known CTranslate2 Whisper model from the official faster-whisper repositories on Hugging Face (`Systran/faster-whisper-*`) with optional progress + cancellation **[Plan 5: now a method on the `Cadmus` handle (D12); destination is the configured cache, not a per-call directory]** |
+| `find_model` / `findModel` | Locate a model directory across explicit paths, env var, and standard cache dir **[Plan 5: D11 supersedes — now `cadmus.find_model(name)`, cache-relative only; no env var, no platform magic paths, no `searchPaths` argument]** |
 | `version` | CTranslate2, ct2rs, and cadmus version strings compiled into the binary |
+
+**[Plan 5: new operation]** `Cadmus::new(CadmusConfig { model_cache })` constructs the handle that hosts `list_available_models` / `find_model` / `download_model` / `load_model` (D12). The free functions `transcribe(audio, &Path, opts)` (one-shot) and `version()` remain free.
 
 ### 4.2 Data Types
 
@@ -63,11 +67,13 @@ The same concepts exist in Rust and JavaScript with idiomatic naming. Exact sign
 
 `Segment` — start time, end time, text. Times are in seconds. Boundaries come from Whisper's timestamp tokens, parsed out of the model output.
 
-`ModelInfo` — model name (e.g. `tiny`, `base`, `small`, `medium`, `large-v3`), approximate download size in bytes, one-line description, expected file list inside the model directory.
+`ModelInfo` — model name (e.g. `tiny`, `base`, `small`, `medium`, `large-v3`), approximate download size in bytes, one-line description, expected file list inside the model directory. **[Plan 5: per D15 the surfaced shape is `name`, `description`, `size_bytes`, `family` (Whisper / DistilWhisper), `multilingual`, `cached` (computed at call time per D19), `repo`, `files`.]**
 
-`LoadModelOptions` — thread count override (defaults to logical CPU count), compute type (e.g. `int8`, `float16`, `float32`; defaults to model's native).
+`ModelRef` **[Plan 5, D18]** — `Name(String)` for catalog entries (resolved via the configured cache) or `Path(PathBuf)` for arbitrary directories. `From<&str>`, `From<String>`, `From<&Path>`, `From<PathBuf>` for ergonomic call sites.
 
-`TranscribeOptions` — language (BCP-47, or `auto` for ct2rs's language detection), beam size, per-call thread count override.
+`LoadModelOptions` — thread count override (defaults to logical CPU count), compute type (e.g. `int8`, `float16`, `float32`; defaults to model's native; **Plan 5/D16: default is `Auto`**).
+
+`TranscribeOptions` — language (BCP-47, or `auto` for ct2rs's language detection), beam size, per-call thread count override. **[Plan 5: `threads` is dropped — `severity: accepted` deviation in [bug.kanban.md](bug.kanban.md) ("`TranscribeOptions::threads` not implemented"). ct2rs 0.9.18 has no per-call thread surface; `LoadModelOptions::threads` is the only thread knob.]**
 
 `DownloadModelOptions` — progress callback (Rust: `Box<dyn Fn(u64, u64) + Send + Sync>`; JS: `(received, total) => void`); cooperative cancellation (Rust: `Arc<AtomicBool>` polled inside the download loop; JS: `AbortSignal`). Cancellation is cooperative on both sides — there is no preemptive interruption of inference or decode.
 
@@ -83,6 +89,9 @@ A single error type with discriminated variants:
 | `Inference` | ct2rs returned a failure from `Whisper::generate` |
 | `Poisoned` | Internal lock poisoned by a panic on another thread; context is unusable |
 | `AlreadyFreed` | Operation called on a context after `free()` |
+| `UnknownModel` | **[Plan 5]** Catalog-name lookup failed: name is not one of the 17 entries (D14) |
+| `Download` | **[Plan 5]** HuggingFace download failed (cancelled, HTTP error, network, IO). The `DownloadError` four-variant detail is collapsed into one string for surface narrowness |
+| `Io` | **[Plan 5]** Filesystem error on the cache directory (cannot create, cannot read) |
 
 The npm side surfaces these as `Error` instances with a `code` field carrying the variant name.
 
@@ -100,13 +109,13 @@ Things callers must rely on. Things implementers must not break.
 
 **`TranscriptResult.text` is segments joined with no separator beyond what the model emits.** Segments may carry leading whitespace from Whisper's tokenizer. `text.trim()` is always safe.
 
-**`TranscriptResult.language` echoes intent.** If `options.language` was set explicitly, the result repeats it. If `auto` was used, the result carries ct2rs's language detection.
+**`TranscriptResult.language` echoes intent.** If `options.language` was set explicitly, the result repeats it. If `auto` was used, the result carries ct2rs's language detection. **[Plan 5: when `language == None`, the result is currently `""` — ct2rs 0.9.18 runs detection internally but discards the detected token before returning chunks. `severity: accepted` deviation in [bug.kanban.md](bug.kanban.md) ("Detected language not surfaced"); upstream fix tracked in [backlog.kanban.md](backlog.kanban.md). The explicit-language round-trip case is unaffected.]**
 
 **Segment times come from Whisper's `<|t|>` timestamp tokens**, parsed by Cadmus from the model output. Granularity is segment-level, typically 30-second chunks subdivided by silence and punctuation. Word-level timestamps are out of scope for v1.
 
 **`downloadModel` does not verify integrity.** No checksum. A truncated download surfaces later as a `Load` error when the consumer tries to load the directory.
 
-**`findModel` returns the first match.** Search order is: explicit `searchPaths`, then `CADMUS_MODEL_DIR` env var, then `~/.cache/cadmus/models/`. Duplicate names: first wins, deterministically.
+**`findModel` returns the first match.** Search order is: explicit `searchPaths`, then `CADMUS_MODEL_DIR` env var, then `~/.cache/cadmus/models/`. Duplicate names: first wins, deterministically. **[Plan 5: D11 supersedes — `cadmus.find_model(name)` looks up only inside the configured `model_cache`, returns `Some(dir)` iff every catalog file is present with size > 0 (D19), `None` otherwise. No env, no magic paths, no `searchPaths` argument.]**
 
 **Concurrent `transcribe()` on the same context is safe.** ct2rs/CTranslate2 manage internal batching across replicas. Whether external synchronization is required is verified during the first implementation plan; if needed, `CadmusModel` adds an internal lock without changing the public contract.
 
