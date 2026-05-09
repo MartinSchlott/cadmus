@@ -1,5 +1,3 @@
-#![allow(dead_code)] // Removed in Plan 4 when transcribe() consumes this.
-
 use std::io::Cursor;
 
 use rubato::{

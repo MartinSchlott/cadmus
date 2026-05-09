@@ -1,5 +1,3 @@
-#![allow(dead_code)] // Removed in Plan 4 when the inference test consumes this.
-
 use std::fs::{self, File};
 use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};

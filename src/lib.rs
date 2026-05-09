@@ -1,4 +1,5 @@
 mod decode;
+mod inference;
 mod storage;
 
 pub struct Version {
@@ -49,7 +50,7 @@ mod tests {
     fn version_returns_three_string_fields() {
         let v = version();
         assert_eq!(v.cadmus, env!("CARGO_PKG_VERSION"));
-        assert!(v.cadmus.starts_with("0.4.0"));
+        assert!(v.cadmus.starts_with("0.5.0"));
         let _: String = v.ct2rs;
         let _: String = v.ctranslate2;
     }
