@@ -14,7 +14,7 @@ id: u9pqf6tijgyqo6eidedpm8ua
 Ideas that probably will not happen, but deserve to be written down.
 
 ### Windows x86_64 build (`x86_64-pc-windows-msvc`)
-id: {new}
+id: pkk71vg045y4i5m5jk6bk0wu
 priority: low
 
 Third platform target deferred at v1 Concept Closeout (CONCEPT_v1_buildout.md
@@ -26,7 +26,7 @@ plus a third committed `.node` (`cadmus.win32-x64-msvc.node`). Reactivate when a
 Windows build host becomes available.
 
 ### GPU inference (CUDA / Metal / Vulkan)
-id: {new}
+id: bu57sfzh9xc0z9sf3fl173m9
 priority: low
 
 v1 is CPU-only by deliberate decision (D7). The `ct2rs` features `cuda`,
@@ -36,7 +36,7 @@ binary size, distribution, and the "no system install" promise all shift.
 Accept only as a separate concept.
 
 ### Streaming / real-time partial transcription
-id: {new}
+id: ljfq05lmk2zzq36wxh9swl4v
 priority: low
 
 Cadmus v1 transcribes complete audio buffers and returns the full
@@ -46,7 +46,7 @@ a different API shape (`AsyncIterable<Segment>` on JS, `mpsc`-channel-style on
 Rust) and a different ct2rs invocation pattern. Out of v1 scope.
 
 ### Word-level timestamps
-id: {new}
+id: nt6h3sxrla3973zmtd51qc8y
 priority: low
 
 Whisper's segment-level `<|t|>` tokens are parsed and surfaced. Word-level
@@ -54,7 +54,7 @@ timestamps require a different decoding mode (cross-attention alignment) that
 ct2rs may or may not expose. Out of v1 scope per definition.md §6.
 
 ### Model integrity verification (checksums, signatures)
-id: {new}
+id: o5d8wpz9dcrpzkuti42csael
 priority: low
 
 `download_model` writes downloaded files without verifying their content
@@ -65,7 +65,7 @@ catalog and matching them after download. Worth doing before v1.0 is declared
 production-grade for adversarial environments.
 
 ### V8 finalizer / GC-driven `free()` on the JS side
-id: {new}
+id: i84snkcejae7yr58ajcplgz9
 priority: low
 
 JS-side `free()` is mandatory; forgetting it leaks the native instance for the
@@ -76,7 +76,7 @@ development. Reconsider once the API is stable and consumer feedback warrants
 it.
 
 ### Linux-arm64 and macOS-x64 builds
-id: {new}
+id: qwi8ep7bdjrmx8ad670wr5lf
 priority: low
 
 Two additional platform variants outside v1's two-target scope (`aarch64-apple-darwin`,
@@ -86,7 +86,7 @@ macOS-x64 is straightforward but adds a fourth committed `.node`. Both are
 "if a user shows up needing it" rather than "we should ship this".
 
 ### Benchmarking suite as a public artifact
-id: {new}
+id: t3vg1quqefc95msbozkq7ciz
 priority: low
 
 Internal performance characteristics of CTranslate2 / Whisper are well-known
@@ -96,7 +96,7 @@ matrix, throughput numbers) would let consumers compare CPU configurations
 honestly. Out of v1 scope; not even drafted.
 
 ### Documentation site / hosted docs
-id: {new}
+id: amzkuc859di3vayju8ugp6mb
 priority: low
 
 `README.md` plus `docs/definition.md` and `docs/architecture.md` are the
@@ -110,7 +110,7 @@ id: pqhx4mr761392sc6t42lk3ji
 Considered, scoped enough, ready to be picked up.
 
 ### Linux x86_64 follow-up build
-id: {new}
+id: ggjoacipz9pvwfmwn1evjsp1
 priority: medium
 
 Was Plan 7 in CONCEPT_v1_buildout.md — deferred at concept time and now
@@ -147,7 +147,7 @@ Done when both `.node` binaries are present in HEAD, all cargo and npm
 verifications green on Linux, `npm pack --dry-run` lists both binaries.
 
 ### GitHub Actions / CI matrix migration
-id: {new}
+id: qoq2gu0g2m774vwidbwxayse
 priority: low
 
 CONCEPT_v1_buildout.md D25 made v1 explicitly CI-free: verification is local
@@ -224,7 +224,7 @@ Open against a future plan; not part of v1's local-verification
 flow which prefers the simpler "redownload on failure" path.
 
 ### Complete LICENSE-THIRD-PARTY across the full dep tree
-id: {new}
+id: w77hi82ybwmkscac957x78gg
 priority: medium
 
 `LICENSE-THIRD-PARTY` currently scopes itself to symphonia (MPL-2.0)
