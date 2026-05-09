@@ -1,6 +1,9 @@
 # Cadmus — Definition
 
-The What and Why. Target vision; no inventory yet (no code exists).
+The What and Why. Target vision plus inventory at v1.0.0 — the surface
+described here is the surface that ships.
+
+For *how* it is built, see [architecture.md](architecture.md).
 
 ---
 
@@ -18,7 +21,7 @@ Local-first applications — Electron desktop apps, on-prem servers, privacy-sen
 Cadmus is **one implementation distributed as two artifacts**:
 
 - `cadmus` (crates.io) — Rust library wrapping CTranslate2 (via the `ct2rs` crate) for Whisper inference, plus a pure-Rust audio pipeline (symphonia + rubato). Self-contained, blocking, no FFI escape hatch needed.
-- `@ai-inquisitor/cadmus` (npm) — napi-rs bridge over the Rust crate. Translation layer only. Zero JS runtime dependencies. Prebuilt binaries per platform.
+- `@ai-inquisitor/cadmus` (npm) — napi-rs bridge over the Rust crate, in the same single Cargo crate behind a `napi` feature flag. Translation layer only. Zero JS runtime dependencies. Prebuilt binaries committed to the repository per platform.
 
 The Rust crate is the primary artifact. The npm package is a consumer of the crate, not an alternative path. **All logic lives in the crate**; the bridge maps types and offloads blocking work to the libuv threadpool — nothing else.
 
@@ -32,56 +35,66 @@ These are constraints stated as features. Violating them breaks the product prem
 | No FFmpeg or system audio libs | symphonia (decode) + rubato (resample) + in-house downmix do everything in pure Rust |
 | No CUDA, no GPU (v1) | CPU inference keeps the binary portable; GPU is a later concern |
 | Zero npm runtime deps | The `.node` binary is self-contained — no transitive supply chain |
-| BLAS/Accelerate is bundled, not installed | Linux/Windows binaries embed Intel oneMKL statically (via `ct2rs`'s `intel-onemkl-prebuild`); macOS uses Apple Accelerate, which ships with the OS. Consumers never run a separate install for math libraries |
-| Prebuilt binaries | Consumers run `npm install`; no Rust toolchain, no C++ compiler, no CMake required |
+| BLAS/Accelerate is bundled, not installed | The Linux binary embeds Intel oneMKL statically (via `ct2rs`'s `intel-onemkl-prebuild`); macOS uses Apple Accelerate, which ships with the OS. Consumers never run a separate install for math libraries |
+| Prebuilt binaries committed | Consumers run `npm install`; no Rust toolchain, no C++ compiler, no CMake required. The `.node` binaries live in the repository; releases ship them via the npm `files` allowlist |
 | TypeScript-first, ESM, Node ≥ 22 | The npm side is a first-class TS API, not a JS library with `.d.ts` afterthoughts |
 | Format detected from bytes | Caller never specifies format; magic-byte detection in symphonia |
-| Testable without hardware | Bundled audio fixture enables full end-to-end CI without microphones |
+| Testable without hardware | Bundled audio fixture enables full end-to-end verification without microphones |
 
 ## 4. Surface — Concepts
 
-The same concepts exist in Rust and JavaScript with idiomatic naming. Exact signatures live in [architecture.md](architecture.md). This section defines *what exists*, not *how it spells*.
-
-> **Plan 5 deltas vs. this section** — flagged inline below with `[Plan 5]` markers. The Concept ([CONCEPT_v1_buildout.md](CONCEPT_v1_buildout.md)) overrides definition.md in three places (D11/D12 for cache & `find_model`, D14/D15 for the catalog & `ModelInfo`, D18 for `ModelRef`). Two `severity: accepted` deviations are recorded in [bug.kanban.md](bug.kanban.md). Full reconciliation happens at Concept Closeout — this section is left as the v1-pre-Concept narrative for traceability.
->
-> **Plan 6 deltas vs. this section** — flagged inline below with `[Plan 6]` markers. PLAN_napi_surface materialised the napi-rs bridge and the root TypeScript surface (`@ai-inquisitor/cadmus`): `Cadmus`/`CadmusModel` JS classes, `transcribe()` one-shot, `version()`, plus `DownloadModelOptions` / `LoadModelOptions` / `TranscribeOptions` / `ModelRef` / `CadmusError` exposed as TS types. The JS error contract (`err.code` carries the variant name) is now end-to-end live: synchronous throws (`InvalidArgument`, `AlreadyFreed`, `UnknownModel`) and async-task rejections (`Load`, `Decode`, `Resample`, `Inference`, `Download`, `Io`, `Poisoned`) all surface their codes. Concept Closeout reconciles the inventory.
+The same concepts exist in Rust and JavaScript with idiomatic naming. Exact signatures live in [architecture.md §9](architecture.md). This section defines *what exists*, not *how it spells*.
 
 **Execution model.** The Rust core API is **blocking**: functions return their result directly. Async Rust callers wrap calls in their runtime's blocking-task primitive (`tokio::task::spawn_blocking` or equivalent). The Node bridge offloads each call to the libuv threadpool via napi-rs `AsyncTask` and returns a `Promise`. The core crate carries no executor dependency — runtime choice is the caller's, not the library's.
+
+**Factory pattern.** Cadmus is constructed once as a stateful handle (`Cadmus`) holding the explicit model-cache directory. Catalog inspection, model resolution, downloading, and loading are methods on that handle. Two operations remain free functions because they need no cache: `version()` and the one-shot `transcribe(audio, modelPath, opts)` — the latter takes a path, not a `ModelRef`, since catalog-name resolution requires a `Cadmus` handle.
 
 ### 4.1 Operations
 
 | Operation | Purpose |
 |---|---|
-| `load_model` / `loadModel` | Load a CTranslate2 Whisper model **directory** into memory; returns a stateful context |
-| `transcribe` (on context) | Decode audio bytes and run inference; returns a transcript result |
-| `transcribe` (one-shot) | Convenience: load → transcribe → free. For scripts and tests, not high-throughput callers |
-| `free` (on context) | Release the underlying inference instance. Mandatory on the JS side; on the Rust side `Drop` runs automatically and `free()` is also available |
-| `list_available_models` / `listAvailableModels` | Static catalogue of known CTranslate2 Whisper models with size and description **[Plan 5: now a method on the `Cadmus` handle (D12); 17 fixed entries (D14)]** |
-| `download_model` / `downloadModel` | Fetch a known CTranslate2 Whisper model from the official faster-whisper repositories on Hugging Face (`Systran/faster-whisper-*`) with optional progress + cancellation **[Plan 5: now a method on the `Cadmus` handle (D12); destination is the configured cache, not a per-call directory]** |
-| `find_model` / `findModel` | Locate a model directory across explicit paths, env var, and standard cache dir **[Plan 5: D11 supersedes — now `cadmus.find_model(name)`, cache-relative only; no env var, no platform magic paths, no `searchPaths` argument]** |
-| `version` | CTranslate2, ct2rs, and cadmus version strings compiled into the binary |
-
-**[Plan 5: new operation]** `Cadmus::new(CadmusConfig { model_cache })` constructs the handle that hosts `list_available_models` / `find_model` / `download_model` / `load_model` (D12). The free functions `transcribe(audio, &Path, opts)` (one-shot) and `version()` remain free.
+| `Cadmus::new` / `new Cadmus(...)` | Construct the handle with `CadmusConfig { model_cache }`; creates the cache directory if absent. Rust returns `Result<Cadmus, CadmusError>`; JS throws `CadmusError` synchronously on failure |
+| `cadmus.list_available_models` / `listAvailableModels` | Static catalog of 17 known CTranslate2 Whisper models with size, description, family flags, and per-call `cached` status |
+| `cadmus.find_model` / `findModel` | Locate a catalog model inside the configured cache; returns the directory path if every catalog file is present with non-zero size, otherwise `None` / `null` |
+| `cadmus.download_model` / `downloadModel` | Fetch a catalog model from its HuggingFace repository into the configured cache, with optional progress callback and cooperative cancellation |
+| `cadmus.load_model` / `loadModel` | Load a CTranslate2 Whisper model into memory; accepts a `ModelRef` (catalog name resolved against the cache, or absolute path); returns a stateful `CadmusModel` |
+| `model.transcribe` | Decode audio bytes and run inference; returns a `TranscriptResult` |
+| `transcribe` (one-shot, free function) | Convenience: load → transcribe → free, for scripts and tests. Takes an absolute model directory path, not a `ModelRef` |
+| `model.free` | Release the underlying inference instance. Mandatory on the JS side; on the Rust side `Drop` runs automatically and `free()` is also available |
+| `version` (free function) | CTranslate2, ct2rs, and cadmus version strings compiled into the binary |
 
 ### 4.2 Data Types
 
-`TranscriptResult` — full transcript text, detected/specified language code, and per-segment detail.
+`TranscriptResult` — full transcript text, language code, and per-segment detail.
 
 `Segment` — start time, end time, text. Times are in seconds. Boundaries come from Whisper's timestamp tokens, parsed out of the model output.
 
-`ModelInfo` — model name (e.g. `tiny`, `base`, `small`, `medium`, `large-v3`), approximate download size in bytes, one-line description, expected file list inside the model directory. **[Plan 5: per D15 the surfaced shape is `name`, `description`, `size_bytes`, `family` (Whisper / DistilWhisper), `multilingual`, `cached` (computed at call time per D19), `repo`, `files`.]**
+`ModelInfo` — catalog entry shape:
 
-`ModelRef` **[Plan 5, D18]** — `Name(String)` for catalog entries (resolved via the configured cache) or `Path(PathBuf)` for arbitrary directories. `From<&str>`, `From<String>`, `From<&Path>`, `From<PathBuf>` for ergonomic call sites.
+| Field | Meaning |
+|---|---|
+| `name` | Catalog name, e.g. `tiny`, `base`, `large-v3`, `distil-large-v3.5` |
+| `description` | One short sentence, GUI-displayable |
+| `size_bytes` / `sizeBytes` | Approximate download size in bytes |
+| `family` | `Whisper` or `DistilWhisper` |
+| `multilingual` | `false` for `.en` and Distil-EN-only entries; `true` otherwise |
+| `cached` | Computed at call time: every catalog file is present in the cache with size > 0 |
+| `repo` | HuggingFace repository, e.g. `Systran/faster-whisper-base` |
+| `files` | Expected files inside the model directory; per-file repo overrides are an implementation detail |
 
-`LoadModelOptions` — thread count override (defaults to logical CPU count), compute type (e.g. `int8`, `float16`, `float32`; defaults to model's native; **Plan 5/D16: default is `Auto`**).
+`ModelRef` — discriminated input for `load_model`:
+- `Name` (Rust: `&str` / String) — catalog entry resolved against the configured cache
+- `Path` (Rust: `&Path` / `PathBuf`) — direct path to a model directory
 
-`TranscribeOptions` — language (BCP-47, or `auto` for ct2rs's language detection), beam size, per-call thread count override. **[Plan 5: `threads` is dropped — `severity: accepted` deviation in [bug.kanban.md](bug.kanban.md) ("`TranscribeOptions::threads` not implemented"). ct2rs 0.9.18 has no per-call thread surface; `LoadModelOptions::threads` is the only thread knob.]**
+`LoadModelOptions` — thread count override (defaults to logical CPU count), compute type. The default `compute_type` is `Auto` — ct2rs picks based on the model. Documentation recommends `int8` for CPU users who want maximum throughput.
 
-`DownloadModelOptions` — progress callback (Rust: `Box<dyn Fn(u64, u64) + Send + Sync>`; JS: `(received, total) => void`); cooperative cancellation (Rust: `Arc<AtomicBool>` polled inside the download loop; JS: `AbortSignal`). Cancellation is cooperative on both sides — there is no preemptive interruption of inference or decode.
+`TranscribeOptions` — language (BCP-47, or absent for ct2rs's internal language detection) and beam size. `threads` is intentionally not surfaced — see `docs/bug.kanban.md` ("`TranscribeOptions::threads` not implemented"); ct2rs 0.9.18 has no per-call thread override, only per-instance via `LoadModelOptions::threads`.
+
+`DownloadModelOptions` — progress callback (Rust: `Box<dyn Fn(u64, u64) + Send + Sync>`; JS: `(received, total) => void`); cooperative cancellation (Rust: `Arc<AtomicBool>`; JS: `AbortSignal`). Cancellation is cooperative on both sides — there is no preemptive interruption of inference or decode.
 
 ### 4.3 Errors
 
-A single error type with discriminated variants:
+A single error type with discriminated variants. The npm side surfaces these as `Error` instances with a `code` field carrying the variant name; synchronous throws and async rejections both propagate the typed code.
 
 | Variant | Cause |
 |---|---|
@@ -91,11 +104,10 @@ A single error type with discriminated variants:
 | `Inference` | ct2rs returned a failure from `Whisper::generate` |
 | `Poisoned` | Internal lock poisoned by a panic on another thread; context is unusable |
 | `AlreadyFreed` | Operation called on a context after `free()` |
-| `UnknownModel` | **[Plan 5]** Catalog-name lookup failed: name is not one of the 17 entries (D14) |
-| `Download` | **[Plan 5]** HuggingFace download failed (cancelled, HTTP error, network, IO). The `DownloadError` four-variant detail is collapsed into one string for surface narrowness |
-| `Io` | **[Plan 5]** Filesystem error on the cache directory (cannot create, cannot read) |
-
-The npm side surfaces these as `Error` instances with a `code` field carrying the variant name. **[Plan 6: implemented.]** Synchronous throws (`AlreadyFreed`, `UnknownModel` via `loadModel({ name })`, `InvalidArgument` for ModelRef shape and unknown `computeType`) propagate the typed code via `JsError<String>::throw_into` plus a `PendingException` sentinel. AsyncTask rejections (`Load`, `Decode`, `Resample`, `Inference`, `Download`, `Io`, `Poisoned`) propagate the typed code by building the JS Error directly with `napi_create_error` in `Task::reject` and packing it into the `napi::Error::maybe_raw` slot, so the framework's deferred-reject path forwards our error verbatim.
+| `UnknownModel` | Catalog-name lookup failed: name is not one of the 17 entries |
+| `Download` | HuggingFace download failed (cancelled, HTTP error, network, IO). Detail is collapsed into one string for surface narrowness |
+| `Io` | Filesystem error on the cache directory (cannot create, cannot read) |
+| `InvalidArgument` | Malformed `ModelRef` (both `name` and `path` set, or neither), unknown `computeType`, or other shape violations at the napi boundary |
 
 ## 5. Behavioral Invariants
 
@@ -103,45 +115,50 @@ Things callers must rely on. Things implementers must not break.
 
 **`free()` is mandatory on the JS side.** A context that goes out of scope in JS without `free()` leaks the native inference instance for the lifetime of the process. There is no V8 finalizer-based release. On the Rust side, `Drop` runs automatically at scope exit; calling `.free()` explicitly is also valid and equivalent.
 
-**`transcribe()` after `free()` throws synchronously** with the `AlreadyFreed` error variant. It does not return a rejected promise — the failure is observable before any async work begins. **[Plan 6: enforced by a mirror `freed` flag on the napi-side `CadmusModel` checked before `AsyncTask` construction; `tests/lifecycle.test.mjs` covers free-after-free.]**
+**`transcribe()` after `free()` throws synchronously** with the `AlreadyFreed` error variant. It does not return a rejected promise — the failure is observable before any async work begins. Enforced by a mirror `freed` flag on the napi-side `CadmusModel` checked before `AsyncTask` construction.
 
-**`free()` does not abort in-flight transcriptions.** A `transcribe()` Promise created *before* `free()` resolves normally with its result; `free()` is non-blocking and the underlying instance is released only after all in-flight calls finish. New `transcribe()` calls submitted *after* `free()` always throw `AlreadyFreed`. This is a deliberate value-over-abort choice — see [architecture.md §5](architecture.md) for the mechanism (reference-counted deferred release). **[Plan 6: re-verified across the AsyncTask boundary — `tests/lifecycle.test.mjs` runs a 30 s synthesised WAV, calls `free()` mid-flight, and asserts the in-flight Promise resolves with non-empty segments while the next call rejects with `code === 'AlreadyFreed'`.]**
+**`free()` does not abort in-flight transcriptions.** A `transcribe()` Promise created *before* `free()` resolves normally with its result; `free()` is non-blocking and the underlying instance is released only after all in-flight calls finish. New `transcribe()` calls submitted *after* `free()` always throw `AlreadyFreed`. This is a deliberate value-over-abort choice — see [architecture.md §5](architecture.md) for the mechanism (reference-counted deferred release). Verified directly against the napi/AsyncTask boundary.
 
 **Audio format is detected from content, not from filename or caller hints.** A `.mp3` file containing WAV data transcribes correctly. Truly corrupt audio raises `Decode`.
 
 **`TranscriptResult.text` is segments joined with no separator beyond what the model emits.** Segments may carry leading whitespace from Whisper's tokenizer. `text.trim()` is always safe.
 
-**`TranscriptResult.language` echoes intent.** If `options.language` was set explicitly, the result repeats it. If `auto` was used, the result carries ct2rs's language detection. **[Plan 5: when `language == None`, the result is currently `""` — ct2rs 0.9.18 runs detection internally but discards the detected token before returning chunks. `severity: accepted` deviation in [bug.kanban.md](bug.kanban.md) ("Detected language not surfaced"); upstream fix tracked in [backlog.kanban.md](backlog.kanban.md). The explicit-language round-trip case is unaffected.]**
+**`TranscriptResult.language` echoes intent.** If `options.language` was set explicitly, the result repeats it. If it was unset, the result currently carries an empty string — ct2rs 0.9.18 runs language detection internally but discards the detected token before returning chunks, so the detected language is unreachable from the public surface. Documented as a `severity: accepted` deviation in `docs/bug.kanban.md` ("Detected language not surfaced when `TranscribeOptions::language == None`"); upstream fix tracked in `docs/backlog.kanban.md` ("Surface ct2rs internally-detected language token"). The explicit-language round-trip case (the common one) is unaffected.
 
 **Segment times come from Whisper's `<|t|>` timestamp tokens**, parsed by Cadmus from the model output. Granularity is segment-level, typically 30-second chunks subdivided by silence and punctuation. Word-level timestamps are out of scope for v1.
 
-**`downloadModel` does not verify integrity.** No checksum. A truncated download surfaces later as a `Load` error when the consumer tries to load the directory.
+**`download_model` does not verify integrity.** No checksum. A truncated download surfaces later as a `Load` error when the consumer tries to load the directory. Resumable downloads (HTTP Range) are tracked in `docs/backlog.kanban.md`.
 
-**`findModel` returns the first match.** Search order is: explicit `searchPaths`, then `CADMUS_MODEL_DIR` env var, then `~/.cache/cadmus/models/`. Duplicate names: first wins, deterministically. **[Plan 5: D11 supersedes — `cadmus.find_model(name)` looks up only inside the configured `model_cache`, returns `Some(dir)` iff every catalog file is present with size > 0 (D19), `None` otherwise. No env, no magic paths, no `searchPaths` argument.]**
+**`find_model` is cache-relative and strict.** Search target is the configured `model_cache` directory only. No environment-variable lookup, no platform-specific magic paths, no fallback search list. Returns `Some(dir)` iff the model directory exists *and* every entry from `ModelInfo::files` is present with non-zero size; `None` otherwise.
 
-**Concurrent `transcribe()` on the same context is safe.** ct2rs/CTranslate2 manage internal batching across replicas. Whether external synchronization is required is verified during the first implementation plan; if needed, `CadmusModel` adds an internal lock without changing the public contract. **[Plan 6: re-verified across the AsyncTask boundary by `tests/lifecycle.test.mjs` — `Promise.all([transcribe, transcribe])` resolves both with valid segments.]**
+**Concurrent `transcribe()` on the same context is safe.** ct2rs/CTranslate2's `ffi::Whisper` is `Send + Sync` (verified directly in `ct2rs/src/sys/whisper.rs`); `Whisper::generate` runs lock-free against an `Arc<Whisper>` clone. Verified across the napi/AsyncTask boundary by `tests/lifecycle.test.mjs` and as a Rust unit test in `src/inference.rs`.
 
-**`downloadModel` progress is monotonic against a constant total.** A single `downloadModel(name, { onProgress })` call delivers `(received, total)` events where `received` is non-decreasing and `total` stays equal to the catalog's `sizeBytes` for the model across every call. **[Plan 6: enforced in the napi bridge — the underlying `storage::download` reports per-file progress with per-file totals; the bridge accumulates committed-file bytes and clamps against the catalog total before forwarding to the JS callback.]**
+**`download_model` progress is monotonic against a constant total.** A single `download_model(name, { onProgress })` call delivers `(received, total)` events where `received` is non-decreasing and `total` stays equal to the catalog's `size_bytes` for the model across every call. The bridge accumulates committed-file bytes and clamps against the catalog total before forwarding to the JS callback.
 
-**Default `threads` equals logical CPU count.** Test environments running multiple contexts simultaneously must lower this explicitly to avoid memory pressure.
+**Default `threads` equals logical CPU count.** Test environments running multiple contexts simultaneously must lower this explicitly via `LoadModelOptions::threads` to avoid memory pressure.
 
 ## 6. Out of Scope (v1)
 
-Stated explicitly so future contributors do not assume otherwise:
+Stated explicitly so future contributors do not assume otherwise. All deferred items are tracked as cards in `docs/backlog.kanban.md`.
 
-- GPU inference (CUDA, Metal, Vulkan)
-- Streaming transcription / real-time partial results
-- Speaker diarisation
-- Word-level timestamps (segment-level only via Whisper timestamp tokens)
-- Model integrity verification (checksums, signatures)
-- Auto-`free` via V8 finalizer on the JS side
-- Word error rate guarantees — accuracy is CTranslate2 + Whisper's responsibility, not Cadmus's
+- Linux x86_64 build itself — v1.0.0 ships macOS arm64 only; Linux is wired in `Cargo.toml` / `package.json` / `index.ts` but the binary is not yet committed. Backlog: "Linux x86_64 follow-up build" (Open).
+- Windows x86_64 build (`x86_64-pc-windows-msvc`).
+- Linux-arm64 and macOS-x64 builds.
+- GPU inference (CUDA, Metal, Vulkan).
+- Streaming transcription / real-time partial results.
+- Speaker diarisation.
+- Word-level timestamps (segment-level only via Whisper timestamp tokens).
+- Model integrity verification (checksums, signatures).
+- HTTP Range / resume on `download_model`.
+- Auto-`free` via V8 finalizer on the JS side.
+- Word error rate guarantees — accuracy is CTranslate2 + Whisper's responsibility, not Cadmus's.
+- GitHub Actions / CI matrix — v1 verification is local on each build host (see `architecture.md §6`).
 
 ## 7. Success Criteria
 
 The product is successful when:
 
 1. A Rust application adds `cadmus` to `Cargo.toml` and transcribes audio bytes without any system dependency beyond a C++ toolchain and CMake at build time, plus Apple Accelerate (where the OS provides it) at runtime.
-2. A Node.js or Electron application runs `npm install @ai-inquisitor/cadmus` on Linux x64, macOS arm64, or Windows x64 and transcribes audio without a Rust toolchain, Python, FFmpeg, or a separate BLAS install.
-3. CI transcribes the bundled fixture (`fixtures/eins-zwei-drei.mp3`) on every push and asserts the result contains the expected words — across all three platforms.
+2. A Node.js or Electron application runs `npm install @ai-inquisitor/cadmus` on macOS arm64 (and Linux x64 once the follow-up build lands) and transcribes audio without a Rust toolchain, Python, FFmpeg, or a separate BLAS install.
+3. The bundled fixture (`fixtures/eins-zwei-drei.mp3`) transcribes locally on each supported build host and asserts the result contains the expected words. Verification is manual per the Release Runbook (`docs/archive/CONCEPT_v1_buildout.md` Release Runbook, retained for reference) — no CI matrix.
 4. The npm `.node` binary loads in Electron renderer or main process without additional native module configuration beyond standard napi-rs conventions.

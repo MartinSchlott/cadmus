@@ -1,6 +1,6 @@
 [package]
 name = "cadmus"
-version = "0.7.0"
+version = "1.0.0"
 edition = "2024"
 license = "MIT"
 description = "CTranslate2-based Whisper transcription, synchronous Rust core, optional napi-rs Node surface."
