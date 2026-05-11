@@ -63,11 +63,99 @@ plumbing) — out of v1 scope. Reactivate when the ct2rs upstream
 backlog item lands (see `docs/backlog.kanban.md`: "Surface ct2rs
 internally-detected language token").
 
+### `free()` during in-flight `transcribe()` rejects the in-flight Promise with `AlreadyFreed`
+id: {new}
+severity: high
+priority: high
+
+`tests/lifecycle.test.mjs:40` (`free-during-inflight: in-flight
+Promise resolves; subsequent transcribe rejects`) fails on Linux
+x86_64 with `error: 'model already freed', code: 'AlreadyFreed'`.
+The contract documented by the test is: a `transcribe()` Promise
+that was created before `free()` must still resolve with valid
+segments; only subsequent `transcribe()` calls may reject.
+
+**Mechanism.** The JS path runs decode before the inference handle's
+freed check:
+
+```
+TranscribeTask::compute()
+  → api::CadmusModel::transcribe()
+    → transcribe_with_handle()
+      → decode_to_pcm16k(audio)            // slow, no freed check
+      → InferenceHandle::transcribe_with_options()
+          if self.freed.load(...) { return AlreadyFreed }   // too late
+```
+
+If JS calls `model.free()` between the start of `decode_to_pcm16k`
+and the freed check inside `transcribe_with_options`, the in-flight
+task observes `freed=true` and rejects. The Rust-side test
+`inference::tests::free_during_inflight_completes_normally` does not
+catch this because it skips decode and calls `InferenceHandle::transcribe`
+on raw samples — the worker reaches the freed check before
+`free()` is called and proceeds with a held `Arc<Whisper>` clone.
+
+The race is platform-independent. macOS just hides it: with fast
+cores, decode of the 30 s padded WAV often finishes inside the
+test's `sleep(50)`, so `free()` lands after the Promise has already
+resolved. On the slower Linux build host (1–2 cores) the window
+opens reliably.
+
+**What was attempted.** The `PLAN_linux_x64_build` session
+(2026-05-11, since killed) tried to fix this by adding an
+`AtomicUsize inflight` counter to `napi::CadmusModel` and a `Drop`
+on `TranscribeTask` that defers `inner.free()` until inflight
+reaches zero. The patch is preserved at
+`docs/archive/PLAN_linux_x64_build.napi_rogue_attempt.diff` for
+reference. It was reverted because (a) it was out of plan scope
+(Rule 8) and (b) it has its own race: between the freed check in
+`transcribe()` and the `inflight.fetch_add(1)`, `free()` can land,
+see inflight==0, and call `inner.free()` before the in-flight task
+increments the counter.
+
+**Recommended approach for a proper fix.** Either:
+
+1. Move the freed observation into `compute()` so the entire
+   in-flight task uses a snapshot taken at task-start (e.g. let
+   `transcribe()` clone an `Arc<Whisper>` immediately and pass it
+   to the AsyncTask instead of the bare `Arc<api::CadmusModel>`),
+   so `free()` cannot interrupt mid-decode.
+2. Accept the simpler contract: `free()` aborts in-flight Promises
+   with `AlreadyFreed` synchronously, and update
+   `tests/lifecycle.test.mjs:40` plus `definition.md §5` accordingly.
+
+Option 1 keeps the documented contract; option 2 simplifies the
+implementation. Decision belongs to a separate plan.
+
 ## In Progress
 id: fpxmyg2qwsy8kuxtv3lzrige
 
 ## Done
 id: 9bd2g6q54xi7cfr0hhnqzls0
+
+### Test cache race in `cargo test` between `storage` and `inference` test modules
+id: {new}
+severity: medium
+priority: medium
+
+`src/storage::tests::download_tiny_smoke` and
+`src/inference::tests::ensure_tiny` both touch the shared cache
+directory `target/cadmus-test-cache/tiny`. `cargo test` runs the
+tests inside a single binary in parallel by default, so the two
+paths can race on the cache: one stages the model files while the
+other is part-way through `ensure_present` / `InferenceHandle::new`,
+producing partial files and intermittent failures. The race is
+visible on slower hosts (Linux build host, 1–2 cores) and latent
+on fast macOS.
+
+Fix: test-only `Mutex` guard `test_cache_lock()` in `src/storage.rs`
+(`#[cfg(test)]`), acquired by both `download_tiny_smoke` and
+`ensure_tiny`. `ensure_tiny` additionally validates the cached
+model by attempting `InferenceHandle::new`; on failure it removes
+the directory and re-stages from scratch. No production code
+touched.
+
+Discovered during PLAN_linux_x64_build verification.
 
 <!-- markdown-kanban
 name: bug

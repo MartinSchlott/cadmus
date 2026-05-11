@@ -109,42 +109,6 @@ id: pqhx4mr761392sc6t42lk3ji
 
 Considered, scoped enough, ready to be picked up.
 
-### Linux x86_64 follow-up build
-id: ggjoacipz9pvwfmwn1evjsp1
-priority: medium
-
-Was Plan 7 in CONCEPT_v1_buildout.md — deferred at concept time and now
-captured as a backlog item at Concept Closeout. Cadmus 1.0.0 ships a macOS
-arm64 binary only; Linux x86_64 plumbing (`Cargo.toml` per-target ct2rs
-features, `package.json.files` allowlist, `index.ts` platform dispatch) is
-already wired but the Linux `.node` is not built yet.
-
-Scope: on an `x86_64-unknown-linux-gnu` host, run Phase B Steps 12–17 of
-`docs/archive/PLAN_skeleton.md` plus the Linux-half of every Plan 2–6
-verification:
-
-- Skeleton: `cargo build --release [--features napi]`, `cargo test [--features napi]`,
-  `npm install && npm run build`, `cargo package --list`, `npm pack --dry-run`
-  (now showing both `.node` files), commit `cadmus.linux-x64-gnu.node`.
-- Audio pipeline: `cargo test` for the symphonia/rubato decode paths against
-  the three fixtures (mp3/wav/flac).
-- Model storage: `cargo test` for the HuggingFace downloader (idempotent
-  against the test cache).
-- Inference core: end-to-end inference test (tiny model, eins-zwei-drei
-  fixture, digits-set assertion) plus the three D4 tests
-  (free-after-free, free-during-inflight, concurrent transcribe).
-- Public API: integration tests in `tests/public_api.rs` (rlib path, no napi
-  feature) — see also `architecture.md §8` on the two Rust test modes.
-- Napi surface: `npm test` (`node --test`) against the freshly-built Linux
-  `.node` covering version, catalog, find, load+transcribe, free-after-free,
-  free-during-inflight, concurrent transcribe.
-
-Prerequisites: Linux x86_64 host with `build-essential`, `cmake`, `pkg-config`,
-Node ≥ 22, Rust stable. First `cargo build --features napi` triggers the
-CTranslate2 + oneMKL + DNNL CMake build (10–25 min on a fresh host).
-
-Done when both `.node` binaries are present in HEAD, all cargo and npm
-verifications green on Linux, `npm pack --dry-run` lists both binaries.
 
 ### GitHub Actions / CI matrix migration
 id: qoq2gu0g2m774vwidbwxayse
@@ -267,6 +231,22 @@ Being actively worked on.
 id: x8vv0f33ci8qvea4z09xkqbt
 
 Completed and shipped.
+
+### Linux x86_64 follow-up build
+id: ggjoacipz9pvwfmwn1evjsp1
+priority: medium
+
+Plan PLAN_linux_x64_build completed and archived. Cadmus 1.0.0
+now ships both `cadmus.darwin-arm64.node` and
+`cadmus.linux-x64-gnu.node` from HEAD.
+
+Verification on `x86_64-unknown-linux-gnu`: `cargo test` 33 passed,
+`cargo test --features napi` 28 passed, `cargo package --list` and
+`npm pack --dry-run` both match the documented allowlists.
+`npm test` 15/16 — the one failing case (`tests/lifecycle.test.mjs:40`
+`free-during-inflight`) surfaced a pre-existing v1 napi bug, not a
+Linux regression. Filed as a separate `bug.kanban.md` card; needs
+its own plan to fix.
 
 <!-- markdown-kanban
 # Writers use id: {new} for new boards, columns, and cards.

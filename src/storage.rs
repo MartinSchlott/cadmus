@@ -4,6 +4,8 @@ use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(test)]
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 pub(crate) struct FileSpec {
     pub repo: &'static str,
@@ -44,6 +46,17 @@ const CHUNK_SIZE: usize = 64 * 1024;
 #[cfg(test)]
 pub(crate) fn test_cache_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/cadmus-test-cache")
+}
+
+#[cfg(test)]
+static TEST_CACHE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+#[cfg(test)]
+pub(crate) fn test_cache_lock() -> MutexGuard<'static, ()> {
+    TEST_CACHE_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap()
 }
 
 pub(crate) fn ensure_present(entry: &ModelEntry, dir: &Path) -> bool {
@@ -186,6 +199,7 @@ mod tests {
     // present with size > 0.
     #[test]
     fn download_tiny_smoke() {
+        let _guard = test_cache_lock();
         let dir = test_cache_dir().join("tiny");
         download(&TINY, &dir, None, None).expect("first download failed");
         assert!(ensure_present(&TINY, &dir), "files missing after download");

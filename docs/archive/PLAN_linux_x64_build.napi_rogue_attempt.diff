@@ -1,0 +1,81 @@
+diff --git a/src/napi.rs b/src/napi.rs
+index 1239af6..283056a 100644
+--- a/src/napi.rs
++++ b/src/napi.rs
+@@ -34,7 +34,7 @@
+ 
+ use std::path::PathBuf;
+ use std::ptr;
+-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
++use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+ use std::sync::Arc;
+ 
+ use napi::bindgen_prelude::{
+@@ -427,6 +427,9 @@ pub struct CadmusModel {
+     // AlreadyFreed synchronously per definition.md §5: a fresh transcribe()
+     // after free() must throw before the Promise is constructed.
+     freed: Arc<AtomicBool>,
++    // Counts JS transcribe tasks that were accepted before free(). The
++    // underlying native model is released only after this reaches zero.
++    inflight: Arc<AtomicUsize>,
+ }
+ 
+ #[napi]
+@@ -445,8 +448,11 @@ impl CadmusModel {
+                 "model already freed",
+             ));
+         }
++        self.inflight.fetch_add(1, Ordering::SeqCst);
+         Ok(AsyncTask::new(TranscribeTask {
+             model: Arc::clone(&self.inner),
++            freed: Arc::clone(&self.freed),
++            inflight: Arc::clone(&self.inflight),
+             audio,
+             options: options.map(api::TranscribeOptions::from).unwrap_or_default(),
+             stash: None,
+@@ -455,8 +461,12 @@ impl CadmusModel {
+ 
+     #[napi]
+     pub fn free(&self) {
+-        self.freed.store(true, Ordering::SeqCst);
+-        self.inner.free();
++        if self.freed.swap(true, Ordering::SeqCst) {
++            return;
++        }
++        if self.inflight.load(Ordering::SeqCst) == 0 {
++            self.inner.free();
++        }
+     }
+ }
+ 
+@@ -582,6 +592,7 @@ impl Task for LoadTask {
+         Ok(CadmusModel {
+             inner: Arc::new(output),
+             freed: Arc::new(AtomicBool::new(false)),
++            inflight: Arc::new(AtomicUsize::new(0)),
+         })
+     }
+ 
+@@ -592,11 +603,22 @@ impl Task for LoadTask {
+ 
+ pub struct TranscribeTask {
+     model: Arc<api::CadmusModel>,
++    freed: Arc<AtomicBool>,
++    inflight: Arc<AtomicUsize>,
+     audio: Buffer,
+     options: api::TranscribeOptions,
+     stash: Option<CadmusError>,
+ }
+ 
++impl Drop for TranscribeTask {
++    fn drop(&mut self) {
++        let prev = self.inflight.fetch_sub(1, Ordering::SeqCst);
++        if prev == 1 && self.freed.load(Ordering::SeqCst) {
++            self.model.free();
++        }
++    }
++}
++
+ impl Task for TranscribeTask {
+     type Output = api::TranscriptResult;
+     type JsValue = TranscriptResultJs;

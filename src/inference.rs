@@ -235,7 +235,7 @@ fn find_token_end(bytes: &[u8], from: usize) -> Option<usize> {
 mod tests {
     use super::*;
     use crate::decode::decode_to_pcm16k;
-    use crate::storage::{TINY, download, ensure_present, test_cache_dir};
+    use crate::storage::{TINY, download, ensure_present, test_cache_dir, test_cache_lock};
 
     use std::fs;
     use std::path::PathBuf;
@@ -245,9 +245,13 @@ mod tests {
     use std::time::Duration;
 
     fn ensure_tiny() -> PathBuf {
+        let _guard = test_cache_lock();
         let dir = test_cache_dir().join("tiny");
-        if !ensure_present(&TINY, &dir) {
+        let ready = ensure_present(&TINY, &dir) && InferenceHandle::new(&dir).is_ok();
+        if !ready {
+            let _ = fs::remove_dir_all(&dir);
             download(&TINY, &dir, None, None).expect("staging tiny failed");
+            InferenceHandle::new(&dir).expect("load staged tiny");
         }
         assert!(ensure_present(&TINY, &dir));
         dir
