@@ -73,6 +73,24 @@ Two additional platform variants outside v1's two-target scope (`aarch64-apple-d
 macOS-x64 is straightforward but adds a fourth committed `.node`. Both are
 "if a user shows up needing it" rather than "we should ship this".
 
+### Windows intra-op parallelism (OpenMP / oneDNN threadpool)
+id: {new}
+priority: low
+
+The Windows `.node` is built with `OPENMP_RUNTIME=NONE` because neither ct2rs
+OpenMP feature works on MSVC — `openmp-runtime-intel` hard-requires `libiomp5`
+(absent on the CI runner, and bundling `libiomp5md.dll` would break the
+self-contained-binary promise) and `openmp-runtime-comp` emits a `link-lib=gomp`
+that does not exist for MSVC. Result: CTranslate2's intra-op parallelism is
+reduced on Windows; large models are noticeably slower than the macOS/Linux
+binaries.
+
+Options to reactivate, none free: patch ct2rs so the `comp` feature links
+`vcomp` instead of `gomp` on MSVC (upstream fix or a cargo `[patch]`); or build
+oneDNN with `DNNL_CPU_RUNTIME=THREADPOOL` (no external lib, but ct2rs exposes no
+feature for it). Pick this up only if a Windows user reports the throughput as a
+real problem.
+
 ### Benchmarking suite as a public artifact
 id: t3vg1quqefc95msbozkq7ciz
 priority: low
@@ -216,9 +234,9 @@ Third platform target, originally deferred at v1 Concept Closeout for lack of a
 Windows build host. Resolved by moving releases to GitHub Actions, whose
 `windows-latest` runner provides MSVC and the `intel-onemkl-prebuild` artifacts
 at no cost — no owned Windows host needed. `Cargo.toml` gained a
-`cfg(target_os = "windows")` ct2rs block (`whisper`, `dnnl`,
-`openmp-runtime-comp` — MKL and Intel OpenMP omitted because `libiomp5` is
-absent on the `windows-latest` runner), `package.json` lists
+`cfg(target_os = "windows")` ct2rs block (`whisper`, `dnnl` — no OpenMP, since
+`openmp-runtime-intel` needs `libiomp5` and `openmp-runtime-comp` links GCC's
+`gomp`, neither usable on MSVC), `package.json` lists
 `cadmus.win32-x64-msvc.node` in
 `files` and `x86_64-pc-windows-msvc` in `napi.targets`, and `index.ts` dispatches
 `win32-x64`. Built and shipped by the `Release` workflow.
