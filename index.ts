@@ -56,9 +56,11 @@ if (platform === 'darwin' && arch === 'arm64') {
   binding = require('./cadmus.darwin-arm64.node') as NativeBinding;
 } else if (platform === 'linux' && arch === 'x64') {
   binding = require('./cadmus.linux-x64-gnu.node') as NativeBinding;
+} else if (platform === 'win32' && arch === 'x64') {
+  binding = require('./cadmus.win32-x64-msvc.node') as NativeBinding;
 } else {
   throw new Error(
-    `Cadmus: unsupported platform ${platform}-${arch}. Supported: darwin-arm64, linux-x64.`,
+    `Cadmus: unsupported platform ${platform}-${arch}. Supported: darwin-arm64, linux-x64, win32-x64.`,
   );
 }
 

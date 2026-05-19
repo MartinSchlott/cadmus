@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "description": "CTranslate2-based Whisper transcription with prebuilt napi-rs binaries.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MartinSchlott/cadmus.git"
+  },
   "type": "module",
   "main": "index.js",
   "types": "index.d.ts",
@@ -16,22 +20,30 @@
     "types.d.ts",
     "cadmus.darwin-arm64.node",
     "cadmus.linux-x64-gnu.node",
+    "cadmus.win32-x64-msvc.node",
     "LICENSE",
     "LICENSE-THIRD-PARTY",
     "README.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "napi": {
     "binaryName": "cadmus",
     "targets": [
       "aarch64-apple-darwin",
-      "x86_64-unknown-linux-gnu"
+      "x86_64-unknown-linux-gnu",
+      "x86_64-pc-windows-msvc"
     ]
   },
   "scripts": {
     "build:napi": "napi build --release --platform --no-js --dts napi-binding.d.ts --features napi",
     "build:ts": "tsc",
     "build": "npm run build:napi && npm run build:ts",
-    "test": "node --test --test-concurrency=1 tests/*.test.mjs"
+    "test": "node --test --test-concurrency=1 tests/*.test.mjs",
+    "release": "gh workflow run release.yml --field bump=patch",
+    "release:minor": "gh workflow run release.yml --field bump=minor",
+    "release:major": "gh workflow run release.yml --field bump=major"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.6.2",

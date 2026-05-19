@@ -1,0 +1,144 @@
+name: Release
+
+# Manual, one-button release. Trigger from the GitHub Actions UI ("Run workflow")
+# or via `npm run release` / `npm run release:minor` / `npm run release:major`
+# (which call `gh workflow run`). The workflow builds the prebuilt `.node` for all
+# three platforms, bumps the npm version, commits the binaries, tags, and publishes.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Semver bump for this release
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+
+# Never run two releases at once — the publish job pushes to the default branch.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # publish job pushes the release commit + tag
+  id-token: write   # npm publish --provenance
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    strategy:
+      # Surface all three results — a Windows failure should not hide the
+      # macOS/Linux outcome. `publish` still requires every leg to be green.
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: darwin-arm64
+            artifact: cadmus.darwin-arm64.node
+          - os: ubuntu-latest
+            target: linux-x64-gnu
+            artifact: cadmus.linux-x64-gnu.node
+          - os: windows-latest
+            target: win32-x64-msvc
+            artifact: cadmus.win32-x64-msvc.node
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install CMake (macOS)
+        if: runner.os == 'macOS'
+        run: brew list cmake >/dev/null 2>&1 || brew install cmake
+
+      - name: Set up MSVC environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Caches ~/.cargo and target/ — including ct2rs's CTranslate2 + oneMKL/DNNL
+      # CMake build output. Cold build is 10-25 min per platform; warm is minutes.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build native binary
+        run: npm run build:napi
+
+      - name: Verify binary exists
+        shell: bash
+        run: test -f "${{ matrix.artifact }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish to npm
+    needs: build   # skipped if any build leg fails — no half-platform releases
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: Download platform binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: .
+          merge-multiple: true
+
+      - run: npm ci
+
+      - name: Compile TypeScript surface
+        run: npm run build:ts
+
+      - name: Verify all platform binaries present
+        run: |
+          for f in cadmus.darwin-arm64.node cadmus.linux-x64-gnu.node cadmus.win32-x64-msvc.node; do
+            test -f "$f" || { echo "missing $f"; exit 1; }
+          done
+
+      - name: Bump version
+        id: bump
+        run: |
+          npm version ${{ inputs.bump }} --no-git-tag-version
+          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Commit, tag and push
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add cadmus.darwin-arm64.node cadmus.linux-x64-gnu.node cadmus.win32-x64-msvc.node \
+                  package.json package-lock.json
+          git commit -m "chore(release): v${{ steps.bump.outputs.version }} — prebuilt binaries for darwin-arm64, linux-x64, win32-x64"
+          git tag "v${{ steps.bump.outputs.version }}"
+          git push origin HEAD:${{ github.ref_name }}
+          git push origin "v${{ steps.bump.outputs.version }}"
+
+      - name: Publish to npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub release
+        run: gh release create "v${{ steps.bump.outputs.version }}" --generate-notes --title "v${{ steps.bump.outputs.version }}"
+        env:
+          GH_TOKEN: ${{ github.token }}

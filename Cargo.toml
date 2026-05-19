@@ -31,13 +31,17 @@ napi = ["dep:napi", "dep:napi-derive"]
 
 # Per-platform ct2rs feature subset (D8) — Pattern B from PLAN_skeleton.md
 # (per-target dependency syntax with disjoint feature lists). Lookup date 2026-05-08.
-# macOS: Accelerate framework + ruy. Linux: oneMKL prebuild + dnnl + openmp.
+# macOS: Accelerate framework + ruy. Linux: oneMKL prebuild + dnnl + compiler openmp.
+# Windows: oneMKL prebuild + dnnl + Intel openmp runtime (ct2rs-platform's MSVC default).
 # CUDA / cuDNN / cuda-dynamic-loading explicitly excluded (D7).
 [target.'cfg(target_os = "macos")'.dependencies]
 ct2rs = { version = "=0.9.18", default-features = false, features = ["whisper", "accelerate", "ruy"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ct2rs = { version = "=0.9.18", default-features = false, features = ["whisper", "mkl", "dnnl", "openmp-runtime-comp"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+ct2rs = { version = "=0.9.18", default-features = false, features = ["whisper", "mkl", "dnnl", "openmp-runtime-intel"] }
 
 [dependencies]
 napi = { version = "3.8.6", default-features = false, features = ["napi8"], optional = true }

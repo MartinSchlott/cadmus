@@ -13,18 +13,6 @@ id: u9pqf6tijgyqo6eidedpm8ua
 
 Ideas that probably will not happen, but deserve to be written down.
 
-### Windows x86_64 build (`x86_64-pc-windows-msvc`)
-id: pkk71vg045y4i5m5jk6bk0wu
-priority: low
-
-Third platform target deferred at v1 Concept Closeout (CONCEPT_v1_buildout.md
-D8 / Out of Scope). Needs a Windows host with MSVC and the `intel-onemkl-prebuild`
-MSVC artifacts. Cross-compilation from macOS or Linux is not feasible for the
-ct2rs + oneMKL stack. The Cargo manifest, napi-rs target list, and TS dispatcher
-are all written for two platforms only — adding Windows means extending all three
-plus a third committed `.node` (`cadmus.win32-x64-msvc.node`). Reactivate when a
-Windows build host becomes available.
-
 ### GPU inference (CUDA / Metal / Vulkan)
 id: bu57sfzh9xc0z9sf3fl173m9
 priority: low
@@ -109,18 +97,6 @@ id: pqhx4mr761392sc6t42lk3ji
 
 Considered, scoped enough, ready to be picked up.
 
-
-### GitHub Actions / CI matrix migration
-id: qoq2gu0g2m774vwidbwxayse
-priority: low
-
-CONCEPT_v1_buildout.md D25 made v1 explicitly CI-free: verification is local
-on each build host, Release Runbook is a manual six-step sequence. None of
-the v1 decisions block CI migration — the same six steps become a workflow
-file and the manual runs become automatic. Trigger is concept R5: "discipline,
-not automation. If discipline slips often, that is the trigger to introduce
-GitHub Actions". Pick this up when the local-discipline cost crosses the
-CI-maintenance cost.
 
 ### Expose CTranslate2 version through ct2rs upstream — track and adopt
 id: s4uvcn156fm4jtik1numnxqs
@@ -231,6 +207,30 @@ Being actively worked on.
 id: x8vv0f33ci8qvea4z09xkqbt
 
 Completed and shipped.
+
+### Windows x86_64 build (`x86_64-pc-windows-msvc`)
+id: pkk71vg045y4i5m5jk6bk0wu
+priority: low
+
+Third platform target, originally deferred at v1 Concept Closeout for lack of a
+Windows build host. Resolved by moving releases to GitHub Actions, whose
+`windows-latest` runner provides MSVC and the `intel-onemkl-prebuild` artifacts
+at no cost — no owned Windows host needed. `Cargo.toml` gained a
+`cfg(target_os = "windows")` ct2rs block (`whisper`, `mkl`, `dnnl`,
+`openmp-runtime-intel`), `package.json` lists `cadmus.win32-x64-msvc.node` in
+`files` and `x86_64-pc-windows-msvc` in `napi.targets`, and `index.ts` dispatches
+`win32-x64`. Built and shipped by the `Release` workflow.
+
+### GitHub Actions / CI matrix migration
+id: qoq2gu0g2m774vwidbwxayse
+priority: low
+
+The v1 manual six-step Release Runbook is now a one-button GitHub Actions
+workflow (`.github/workflows/release.yml`). A `workflow_dispatch` builds the
+`.node` for all three platforms on native runners, bumps the npm version,
+commits the binaries, tags, and runs `npm publish --provenance`. Triggered from
+the Actions UI or via `npm run release` / `release:minor` / `release:major`. The
+repository was made public, so Actions minutes are unmetered.
 
 ### Linux x86_64 follow-up build
 id: ggjoacipz9pvwfmwn1evjsp1
