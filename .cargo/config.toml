@@ -1,0 +1,9 @@
+# Windows (MSVC): ct2rs compiles CTranslate2 with the static CRT (`-MT`), and its
+# build script explicitly warns that consumers must match it. Without this, Rust
+# links the dynamic CRT (`/MD`) instead, and the link fails with LNK2038
+# (RuntimeLibrary mismatch) plus LNK2005 multiply-defined CRT symbols. Forcing
+# the static CRT aligns Rust, the `cc`-built C/C++ deps, and CTranslate2.
+#
+# Scoped to the Windows triple — macOS and Linux builds are unaffected.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
