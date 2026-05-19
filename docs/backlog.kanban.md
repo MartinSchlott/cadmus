@@ -216,8 +216,10 @@ Third platform target, originally deferred at v1 Concept Closeout for lack of a
 Windows build host. Resolved by moving releases to GitHub Actions, whose
 `windows-latest` runner provides MSVC and the `intel-onemkl-prebuild` artifacts
 at no cost — no owned Windows host needed. `Cargo.toml` gained a
-`cfg(target_os = "windows")` ct2rs block (`whisper`, `mkl`, `dnnl`,
-`openmp-runtime-intel`), `package.json` lists `cadmus.win32-x64-msvc.node` in
+`cfg(target_os = "windows")` ct2rs block (`whisper`, `dnnl`,
+`openmp-runtime-comp` — MKL and Intel OpenMP omitted because `libiomp5` is
+absent on the `windows-latest` runner), `package.json` lists
+`cadmus.win32-x64-msvc.node` in
 `files` and `x86_64-pc-windows-msvc` in `napi.targets`, and `index.ts` dispatches
 `win32-x64`. Built and shipped by the `Release` workflow.
 
