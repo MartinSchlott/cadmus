@@ -47,3 +47,7 @@ node_modules/
 # napi-rs auto-generated type-def file — redirected here so it does not collide
 # with tsc's `/index.d.ts`. Not shipped (not in package.json `files`).
 /napi-binding.d.ts
+.agents/skills/architect-review/SKILL.md
+.agents/skills/architect/SKILL.md
+.claude/skills/architect-review/SKILL.md
+.claude/skills/architect/SKILL.md

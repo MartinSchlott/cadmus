@@ -64,7 +64,7 @@ backlog item lands (see `docs/backlog.kanban.md`: "Surface ct2rs
 internally-detected language token").
 
 ### `free()` during in-flight `transcribe()` rejects the in-flight Promise with `AlreadyFreed`
-id: {new}
+id: imtb3d4aqvo2fpzn29k52fev
 severity: high
 priority: high
 
@@ -134,7 +134,7 @@ id: fpxmyg2qwsy8kuxtv3lzrige
 id: 9bd2g6q54xi7cfr0hhnqzls0
 
 ### Test cache race in `cargo test` between `storage` and `inference` test modules
-id: {new}
+id: g7xihcn90hcv18bemmkptaos
 severity: medium
 priority: medium
 

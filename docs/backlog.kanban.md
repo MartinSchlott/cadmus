@@ -74,7 +74,7 @@ macOS-x64 is straightforward but adds a fourth committed `.node`. Both are
 "if a user shows up needing it" rather than "we should ship this".
 
 ### Windows intra-op parallelism (OpenMP / oneDNN threadpool)
-id: {new}
+id: k4yms2g9ru18jh70v9j1qggy
 priority: low
 
 The Windows `.node` is built with `OPENMP_RUNTIME=NONE` because neither ct2rs
