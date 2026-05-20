@@ -146,7 +146,7 @@ fn decode_opus_track(
             continue;
         }
 
-        let samples = decoder.decode_packet(packet.data())?;
+        let samples = decoder.decode_packet(&packet.data)?;
         interleaved.extend_from_slice(&samples);
     }
 
