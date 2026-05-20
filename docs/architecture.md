@@ -14,7 +14,8 @@ For *what* Cadmus is and the contract it exposes, see [definition.md](definition
 | Engine binding | `ct2rs` (Rust, pinned to `=0.9.18`) | Mature MIT-licensed Rust wrapper around CTranslate2 with a `whisper` feature that ships mel-spectrogram and tokenizer support. Bundles CTranslate2 statically — we do not drive its build ourselves |
 | BLAS backend (Linux) | Intel oneMKL via `intel-onemkl-prebuild` | Statically linked, no system install. Fastest CPU path on x86_64. Combined with ct2rs features `dnnl` and `openmp-runtime-comp` |
 | BLAS backend (macOS arm64) | Apple Accelerate + ruy | Apple Accelerate ships with macOS — no extra install. ruy provides ARM matmul primitives |
-| Audio decoding | symphonia (Rust) | Pure Rust decoder/demuxer with magic-byte format detection. Decodes to interleaved float samples at the source's native rate and channel count. Eliminates FFmpeg/PyAV |
+| Audio decoding | symphonia (Rust) | Pure Rust decoder/demuxer with magic-byte format detection. Decodes to interleaved float samples at the source's native rate and channel count. Eliminates FFmpeg/PyAV. Feature set: `mp3`, `wav`, `flac`, `pcm`, `mkv`, `isomp4`, `aac` — covers MP3/WAV/FLAC plus the two browser `MediaRecorder` defaults (WebM/Opus container via `mkv`; MP4/AAC-LC via `isomp4` + `aac`) |
+| Opus decoding | `unsafe-libopus` (Rust) | symphonia 0.5.4 ships an empty Opus decoder stub; we route Opus packets demuxed from the WebM container to `unsafe-libopus` — a `c2rust` transpile of libopus 1.3.1. Pure-Rust build (no C toolchain), BSD-3-Clause. All `unsafe` is isolated in `src/opus.rs` behind a safe wrapper |
 | Resampling | rubato (Rust) | Sinc-based resampler from arbitrary input rate to Whisper's required 16 kHz. Pure Rust |
 | Channel downmix | in-house (Rust) | Stereo/multi-channel → mono via float averaging. Trivial enough to live in `decode.rs` rather than pulling another crate |
 | HTTP downloader | `ureq` with rustls + platform-verifier | Pure-Rust TLS, no system OpenSSL. Used by `storage.rs` to fetch HuggingFace model files |
@@ -62,7 +63,7 @@ A single Cargo crate at the repository root. `[lib] crate-type = ["cdylib", "lib
 ├── types.js / types.d.ts           # tsc-emitted, gitignored
 ├── napi-binding.d.ts               # napi-rs auto-generated; internal
 ├── LICENSE                         # MIT, Copyright (c) 2026 Martin Schlott
-├── LICENSE-THIRD-PARTY             # symphonia (MPL-2.0) attribution
+├── LICENSE-THIRD-PARTY             # symphonia (MPL-2.0), libopus via unsafe-libopus (BSD-3-Clause)
 ├── README.md
 ├── cadmus.darwin-arm64.node        # prebuilt; committed; produced by `napi build` on macOS
 ├── cadmus.linux-x64-gnu.node       # prebuilt; committed by the Linux follow-up
@@ -71,17 +72,22 @@ A single Cargo crate at the repository root. `[lib] crate-type = ["cdylib", "lib
 │   ├── lib.rs                      # public Rust API + #[cfg(feature = "napi")] bridge re-exports
 │   ├── api.rs                      # Cadmus, CadmusModel, ModelRef, options structs, transcribe one-shot
 │   ├── catalog.rs                  # 17-entry static catalog (D14): Whisper + Distil-Whisper
-│   ├── decode.rs                   # symphonia + rubato + downmix → Vec<f32> @ 16 kHz mono
+│   ├── decode.rs                   # symphonia + rubato + downmix → Vec<f32> @ 16 kHz mono;
+│   │                               #   Opus packets routed to src/opus.rs (R1 pre-skip honoured)
 │   ├── error.rs                    # CadmusError + AudioError + InferenceError variants
 │   ├── inference.rs                # InferenceHandle (D4), Whisper <|t|> segment parser,
 │   │                               #   detect_language_from_chunks helper
 │   ├── napi.rs                     # napi-rs bridge (compiled only with --features napi)
+│   ├── opus.rs                     # safe wrapper over unsafe-libopus; OpusHead parser,
+│   │                               #   pre-skip helper; only `unsafe` block in the crate
 │   └── storage.rs                  # HuggingFace downloader (ureq + rustls), find_model,
 │                                   #   ensure_present
 ├── fixtures/
-│   ├── eins-zwei-drei.mp3          # ≈ 2.9 s synthesized German numerals @ 22 050 Hz
+│   ├── eins-zwei-drei.mp3          # ≈ 2.9 s synthesized German numerals @ 22 050 Hz (master)
 │   ├── eins-zwei-drei.wav          # same recording, PCM-16 @ 44 100 Hz
-│   └── eins-zwei-drei.flac         # same recording, FLAC @ 48 000 Hz
+│   ├── eins-zwei-drei.flac         # same recording, FLAC @ 48 000 Hz
+│   ├── eins-zwei-drei.webm         # ffmpeg-derived, WebM/Opus @ 48 000 Hz mono
+│   └── eins-zwei-drei.m4a          # ffmpeg-derived, MP4/AAC-LC @ 44 100 Hz mono
 ├── tests/
 │   ├── _helpers/                   # JS test helpers (e.g. wav.mjs::padWavWithSilence)
 │   ├── public_api.rs               # Rust integration tests (rlib path; gated off under --features napi)
@@ -248,15 +254,16 @@ Windows (`x86_64-pc-windows-msvc`), Linux-arm64, and macOS-x64 are deferred — 
 
 ### 8.1 The Fixtures
 
-`fixtures/eins-zwei-drei.{mp3,wav,flac}` — ≈ 2.9 s of synthesized German numerals ("eins, zwei, drei, vier, fünf") in three containers at three sample rates (MP3 22 050 Hz, WAV PCM-16 44 100 Hz, FLAC 48 000 Hz), all derived from the same master so cross-format decoded length agrees within ~2 048 samples. The three rates ensure rubato's resampler is exercised on every test run regardless of which fixture is loaded. Checked into the repository.
+`fixtures/eins-zwei-drei.{mp3,wav,flac,webm,m4a}` — ≈ 2.9 s of synthesized German numerals ("eins, zwei, drei, vier, fünf") in five containers (MP3, WAV PCM-16, FLAC, WebM/Opus, MP4/AAC-LC) at three distinct sample rates (22 050 Hz from MP3; 44 100 Hz shared by WAV and m4a; 48 000 Hz shared by FLAC and webm), all derived from the same MP3 master via ffmpeg so cross-format decoded length agrees within ~2 048 samples. The webm and m4a fixtures match the two browser `MediaRecorder` defaults (Chromium/Firefox emit WebM/Opus; Safari emits MP4/AAC). The three rates ensure rubato's resampler is exercised on every test run regardless of which fixture is loaded. Checked into the repository.
 
 The end-to-end smoke test downloads `Systran/faster-whisper-tiny` (the smallest CTranslate2 Whisper model, ~75 MB), transcribes the MP3 fixture, and asserts the result contains the expected 1/2/3 markers in either spoken (eins/zwei/drei) or digit form. This exercises symphonia decoding, downmix, rubato resampling, ct2rs's mel + tokenizer + inference path, our segment parser, and (in the Node leg) napi-rs marshalling.
 
 ### 8.2 Layers
 
 **Rust unit tests** (`src/**/*.rs`, run by `cargo test [--features napi]`):
-- `decode`: mono passthrough, stereo cancellation, WAV/MP3/FLAC fixtures, 48 k → 16 k resample, fixture length consistency, corrupt-audio decode error.
-- `inference`: segment-token parser (control tokens, malformed tokens, no-timestamps, multi-chunk, multi-segment, UTF-8), language-detection-from-chunks helpers, end-to-end `eins_zwei_drei` (downloads tiny via `storage`, decodes, infers, asserts), three D4 lifecycle tests (`transcribe_after_free`, `free_during_inflight`, `concurrent_transcribe`).
+- `decode`: mono passthrough, stereo cancellation, MP3/WAV/FLAC/WebM-Opus/MP4-AAC fixtures, 48 k → 16 k resample, fixture length consistency across all five formats, corrupt-audio decode error.
+- `opus`: OpusHead parsing (pre-skip + channels extracted at the right offsets), mapping-family-non-zero rejected with `Decode`, pre-skip helper drops exactly `pre_skip * channels` samples.
+- `inference`: segment-token parser (control tokens, malformed tokens, no-timestamps, multi-chunk, multi-segment, UTF-8), language-detection-from-chunks helpers, end-to-end `eins_zwei_drei` (downloads tiny via `storage`, decodes, infers, asserts), `eins_zwei_drei_via_webm` (same path through the WebM/Opus fixture, proves Opus reaches ct2rs intact), three D4 lifecycle tests (`transcribe_after_free`, `free_during_inflight`, `concurrent_transcribe`).
 - `storage`: `download_tiny_smoke`, `ensure_present_distinguishes_states`, cancel-before-call, cancel-mid-stream against a local mock server, progress callback against a local mock server.
 - `napi` (only with `--features napi`): error-code coverage, `ModelInfo`/`family` round-trip.
 - `version_returns_three_string_fields`.

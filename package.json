@@ -1,6 +1,6 @@
 {
   "name": "@ai-inquisitor/cadmus",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "CTranslate2-based Whisper transcription with prebuilt napi-rs binaries.",
   "license": "MIT",
   "repository": {

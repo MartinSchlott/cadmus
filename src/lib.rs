@@ -3,6 +3,7 @@ mod catalog;
 mod decode;
 mod error;
 mod inference;
+mod opus;
 mod storage;
 
 #[cfg(feature = "napi")]

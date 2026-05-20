@@ -313,6 +313,29 @@ mod tests {
     }
 
     #[test]
+    fn eins_zwei_drei_via_webm() {
+        let dir = ensure_tiny();
+        let handle = InferenceHandle::new(&dir).expect("load tiny");
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fixtures/eins-zwei-drei.webm");
+        let bytes = fs::read(&path).unwrap_or_else(|_| panic!("fixture missing: {:?}", path));
+        let samples = decode_to_pcm16k(&bytes).expect("decode webm fixture failed");
+
+        let segments = handle
+            .transcribe(&samples, Some("de"))
+            .expect("transcribe failed");
+
+        assert!(!segments.is_empty(), "no segments parsed");
+        let joined: String = segments
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect::<Vec<_>>()
+            .concat()
+            .to_lowercase();
+        assert_eins_zwei_drei(&joined);
+    }
+
+    #[test]
     fn transcribe_after_free_returns_already_freed() {
         let dir = ensure_tiny();
         let handle = InferenceHandle::new(&dir).unwrap();

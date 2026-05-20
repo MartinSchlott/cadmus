@@ -4,12 +4,14 @@ use rubato::{
     Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
 use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
+use symphonia::core::codecs::{CodecParameters, DecoderOptions, CODEC_TYPE_NULL, CODEC_TYPE_OPUS};
 use symphonia::core::errors::Error as SymphoniaError;
-use symphonia::core::formats::FormatOptions;
+use symphonia::core::formats::{FormatOptions, FormatReader, Track};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
+
+use crate::opus::{apply_pre_skip, parse_opus_head, OpusDecoder};
 
 pub(crate) const TARGET_SAMPLE_RATE: u32 = 16_000;
 
@@ -56,16 +58,16 @@ fn decode_interleaved(bytes: &[u8]) -> Result<(Vec<f32>, u32, u16), AudioError> 
 
     let track = format
         .default_track()
-        .or_else(|| {
-            format
-                .tracks()
-                .iter()
-                .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
-        })
-        .ok_or_else(|| AudioError::Decode("no decodable track in stream".into()))?;
+        .filter(|t| is_audio(t))
+        .or_else(|| format.tracks().iter().find(|t| is_audio(t)))
+        .ok_or_else(|| AudioError::Decode("no audio track in stream".into()))?;
 
     let track_id = track.id;
     let codec_params = track.codec_params.clone();
+
+    if codec_params.codec == CODEC_TYPE_OPUS {
+        return decode_opus_track(&mut format, track_id, &codec_params);
+    }
 
     let sample_rate = codec_params
         .sample_rate
@@ -109,6 +111,54 @@ fn decode_interleaved(bytes: &[u8]) -> Result<(Vec<f32>, u32, u16), AudioError> 
     }
 
     Ok((interleaved, sample_rate, channels))
+}
+
+fn is_audio(t: &Track) -> bool {
+    t.codec_params.codec != CODEC_TYPE_NULL && t.codec_params.sample_rate.is_some()
+}
+
+fn decode_opus_track(
+    format: &mut Box<dyn FormatReader>,
+    track_id: u32,
+    params: &CodecParameters,
+) -> Result<(Vec<f32>, u32, u16), AudioError> {
+    let extra = params
+        .extra_data
+        .as_ref()
+        .ok_or_else(|| AudioError::Decode("Opus track lacks OpusHead extra_data".into()))?;
+    let head = parse_opus_head(extra)?;
+
+    let mut decoder = OpusDecoder::new(head.channels)?;
+    let mut interleaved: Vec<f32> = Vec::new();
+
+    loop {
+        let packet = match format.next_packet() {
+            Ok(p) => p,
+            Err(SymphoniaError::IoError(ref e))
+                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                break;
+            }
+            Err(e) => return Err(AudioError::Decode(format!("next_packet: {e}"))),
+        };
+
+        if packet.track_id() != track_id {
+            continue;
+        }
+
+        let samples = decoder.decode_packet(packet.data())?;
+        interleaved.extend_from_slice(&samples);
+    }
+
+    let required = head.pre_skip as usize * head.channels as usize;
+    if interleaved.len() < required {
+        return Err(AudioError::Decode(
+            "packet stream shorter than pre-skip".into(),
+        ));
+    }
+    apply_pre_skip(&mut interleaved, head.pre_skip, head.channels);
+
+    Ok((interleaved, 48_000, head.channels as u16))
 }
 
 fn downmix_to_mono(interleaved: &[f32], channels: u16) -> Vec<f32> {
@@ -178,6 +228,8 @@ mod tests {
     const MP3: &[u8] = include_bytes!("../fixtures/eins-zwei-drei.mp3");
     const WAV: &[u8] = include_bytes!("../fixtures/eins-zwei-drei.wav");
     const FLAC: &[u8] = include_bytes!("../fixtures/eins-zwei-drei.flac");
+    const WEBM: &[u8] = include_bytes!("../fixtures/eins-zwei-drei.webm");
+    const M4A: &[u8] = include_bytes!("../fixtures/eins-zwei-drei.m4a");
 
     fn assert_valid_pcm16k(samples: &[f32]) {
         assert!(!samples.is_empty(), "decoded buffer is empty");
@@ -209,17 +261,28 @@ mod tests {
     fn decode_flac_to_pcm16k() {
         assert_valid_pcm16k(&decode_to_pcm16k(FLAC).unwrap());
     }
+    #[test]
+    fn decode_webm_opus_to_pcm16k() {
+        assert_valid_pcm16k(&decode_to_pcm16k(WEBM).unwrap());
+    }
+    #[test]
+    fn decode_m4a_aac_to_pcm16k() {
+        assert_valid_pcm16k(&decode_to_pcm16k(M4A).unwrap());
+    }
 
     #[test]
     fn fixtures_have_consistent_length() {
         let m = decode_to_pcm16k(MP3).unwrap().len();
         let w = decode_to_pcm16k(WAV).unwrap().len();
         let f = decode_to_pcm16k(FLAC).unwrap().len();
-        let lo = *[m, w, f].iter().min().unwrap();
-        let hi = *[m, w, f].iter().max().unwrap();
+        let wb = decode_to_pcm16k(WEBM).unwrap().len();
+        let a = decode_to_pcm16k(M4A).unwrap().len();
+        let lens = [m, w, f, wb, a];
+        let lo = *lens.iter().min().unwrap();
+        let hi = *lens.iter().max().unwrap();
         assert!(
             hi - lo < 2048,
-            "fixtures diverge by {} samples (mp3={m} wav={w} flac={f})",
+            "fixtures diverge by {} samples (mp3={m} wav={w} flac={f} webm={wb} m4a={a})",
             hi - lo
         );
     }
