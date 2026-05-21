@@ -216,6 +216,23 @@ contain a `LICENSE-THIRD-PARTY` that lists every bundled crate and
 binary blob with attribution, and the Release Runbook makes
 regeneration mandatory before publish.
 
+### Bump Cargo.toml and package.json versions together
+id: {new}
+priority: medium
+
+The release workflow (`.github/workflows/release.yml`) bumps only
+`package.json` — `Cargo.toml`'s `version` is never touched. The two
+drifted: at v1.1.1 `package.json` read `1.1.1` while `Cargo.toml`
+still read `1.1.0`. Manually realigned to `1.1.1`, but the cause is
+unfixed — the next release will drift again.
+
+Fix the release pipeline so a single version bump updates both
+manifests in lockstep (e.g. a `cargo set-version` step alongside the
+`npm version` step, or a small script that rewrites both before the
+release commit). `Cargo.lock` updates as a side effect. Done when a
+release `workflow_dispatch` leaves `Cargo.toml`, `Cargo.lock`, and
+`package.json` all on the same version with no manual step.
+
 ## In Progress
 id: tw80l0gyryxgw8p4rxkv055j
 
