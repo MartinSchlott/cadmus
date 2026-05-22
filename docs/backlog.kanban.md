@@ -236,7 +236,7 @@ release `workflow_dispatch` leaves `Cargo.toml`, `Cargo.lock`, and
 `package.json` all on the same version with no manual step.
 
 ### Publish `cadmus` to crates.io (postponed plan)
-id: {new}
+id: iqlaumxdl4jug22gvu5iysc5
 priority: medium
 
 A complete, review-ready plan to publish the `cadmus` crate to

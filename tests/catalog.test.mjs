@@ -14,9 +14,9 @@ test('defaultModels returns the 6 multilingual entries in order', () => {
   for (const m of models) {
     assert.equal(m.family, 'whisper');
     assert.equal(m.multilingual, true);
-    assert.equal(m.files.length, 4);
+    assert.equal(m.files.length, 5);
     const filenames = m.files.map((f) => f.filename).sort();
-    assert.deepEqual(filenames, ['config.json', 'model.bin', 'preprocessor_config.json', 'tokenizer.json']);
+    assert.deepEqual(filenames, ['config.json', 'model.bin', 'preprocessor_config.json', 'tokenizer.json', 'vocabulary.json']);
     for (const f of m.files) {
       assert.ok(f.url.startsWith('https://huggingface.co/'), `unexpected URL: ${f.url}`);
     }

@@ -67,7 +67,7 @@ println!("{}", result.text);
 import { Cadmus, defaultModels, transcribe, version } from '@ai-inquisitor/cadmus'
 import { readFileSync } from 'node:fs'
 
-console.log(version()) // { cadmus: '2.0.0', ct2rs: '...', ctranslate2: '...' }
+console.log(version()) // { cadmus: '2.0.2', ct2rs: '...', ctranslate2: '...' }
 
 const cadmus = new Cadmus({
   modelCache: process.env.CADMUS_CACHE!,
@@ -135,13 +135,14 @@ import { pathToFileURL } from 'node:url'
 const localMirror: ModelSpec = {
   name: 'tiny-local',
   description: 'Air-gapped tiny copy staged on disk.',
-  sizeBytes: 78_021_061,
+  sizeBytes: 79_089_164,
   family: 'whisper',
   multilingual: true,
   files: [
     { filename: 'model.bin',                 url: pathToFileURL('/srv/models/tiny/model.bin').href },
     { filename: 'config.json',               url: pathToFileURL('/srv/models/tiny/config.json').href },
     { filename: 'tokenizer.json',            url: pathToFileURL('/srv/models/tiny/tokenizer.json').href },
+    { filename: 'vocabulary.json',           url: pathToFileURL('/srv/models/tiny/vocabulary.json').href },
     { filename: 'preprocessor_config.json',  url: 'https://internal-mirror.example.com/whisper-tiny/preprocessor_config.json' },
   ],
 }
@@ -206,7 +207,7 @@ MIT (`LICENSE`). symphonia is MPL-2.0 — file-scoped copyleft, attribution in [
 
 ## LLM Reference
 
-Cadmus: a Whisper-transcription library shipped as a single Cargo crate (`cadmus`, consumed as a git dependency — not yet on crates.io) and a napi-rs Node binding (`@ai-inquisitor/cadmus`, npm) — same source, `napi` cargo feature flag toggles between rlib (Rust consumers) and cdylib (`.node` for Node consumers). Inference via `ct2rs 0.9.18` (which bundles CTranslate2 statically); audio pipeline pure-Rust (symphonia + in-house downmix + rubato). v2.0.0, MIT.
+Cadmus: a Whisper-transcription library shipped as a single Cargo crate (`cadmus`, consumed as a git dependency — not yet on crates.io) and a napi-rs Node binding (`@ai-inquisitor/cadmus`, npm) — same source, `napi` cargo feature flag toggles between rlib (Rust consumers) and cdylib (`.node` for Node consumers). Inference via `ct2rs 0.9.18` (which bundles CTranslate2 statically); audio pipeline pure-Rust (symphonia + in-house downmix + rubato). v2.0.2, MIT.
 
 **Architecture — why these choices:** Synchronous Rust core, async at the boundary. The crate has no executor dependency. Async Rust callers wrap in `tokio::task::spawn_blocking`; the Node bridge wraps each call in `napi::AsyncTask` and runs `compute()` on a libuv worker. This keeps runtime choice with the caller and the Node event loop unblocked. Single Cargo crate (`[lib] crate-type = ["cdylib", "lib"]`, `napi = ["dep:napi", "dep:napi-derive"]`) instead of a workspace — Rust consumers never compile any napi code; the same source produces both artifacts. CTranslate2 + Whisper rather than whisper.cpp because faster on CPU, smaller int8 models, production-tested via faster-whisper. ct2rs rather than hand-written FFI because it already wraps mel-spectrogram + tokenizer + decoder loop.
 
