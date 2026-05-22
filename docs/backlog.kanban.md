@@ -217,7 +217,7 @@ binary blob with attribution, and the Release Runbook makes
 regeneration mandatory before publish.
 
 ### Bump Cargo.toml and package.json versions together
-id: {new}
+id: m598ahwzunu8ag01j29lowe8
 priority: medium
 
 The release workflow (`.github/workflows/release.yml`) bumps only
@@ -232,6 +232,35 @@ manifests in lockstep (e.g. a `cargo set-version` step alongside the
 release commit). `Cargo.lock` updates as a side effect. Done when a
 release `workflow_dispatch` leaves `Cargo.toml`, `Cargo.lock`, and
 `package.json` all on the same version with no manual step.
+
+### Publish `cadmus` to crates.io (postponed plan)
+id: {new}
+priority: medium
+
+A complete, review-ready plan to publish the `cadmus` crate to
+crates.io at v1.1.1 was written and then postponed by Human decision
+before execution. It is archived as
+`docs/archive/POSTPONED_PLAN_crates_io_publish.md`; a fresh instance
+can resume directly from it. The plan's only code change (Step 1 —
+four crates.io metadata fields in `Cargo.toml`) was reverted, so the
+plan starts clean from Step 1.
+
+Until this lands, `cadmus` is **not** on crates.io. `README.md`,
+`definition.md`, and `architecture.md` were corrected to say "not yet
+on crates.io" and to describe the crate as a git dependency from the
+public GitHub repo — completing the publish makes those statements
+true again (the archived plan's Doc Update section lists exactly which
+lines, now applied in reverse).
+
+Caveat carried from the plan (R1): the docs.rs build will fail —
+`ct2rs` runs a network-less CMake build that the docs.rs sandbox
+cannot complete. The crate itself publishes fine and a `cadmus`
+dependency works regardless; only the docs.rs page is red.
+
+Relates to `m598ahwzunu8ag01j29lowe8` ("Bump Cargo.toml and
+package.json versions together") — automating the crates.io publish
+in `release.yml` is the natural follow-up once the first manual
+`cargo publish` is done.
 
 ## In Progress
 id: tw80l0gyryxgw8p4rxkv055j

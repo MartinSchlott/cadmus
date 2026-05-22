@@ -2,7 +2,7 @@
 
 **Whisper transcription for Rust and Node.js — CTranslate2 inside, no Python, no FFmpeg, no GPU. One crate, two artifacts.**
 
-Cadmus wraps CTranslate2 (the engine behind faster-whisper) via the `ct2rs` crate, adds a pure-Rust audio pipeline (symphonia + rubato), and ships the result twice: as `cadmus` on crates.io for Rust callers, and as `@ai-inquisitor/cadmus` on npm for Node and Electron. Same logic, prebuilt `.node` binary, zero JS runtime dependencies.
+Cadmus wraps CTranslate2 (the engine behind faster-whisper) via the `ct2rs` crate, adds a pure-Rust audio pipeline (symphonia + rubato), and ships the result twice: as the `cadmus` crate for Rust callers (a git dependency — not yet on crates.io), and as `@ai-inquisitor/cadmus` on npm for Node and Electron. Same logic, prebuilt `.node` binary, zero JS runtime dependencies.
 
 Local STT in JavaScript usually means a Python sidecar, an FFmpeg dependency chain, or a GPU. Cadmus is none of those. The engine is statically linked, the audio decoder is in the binary, CPU is enough.
 
@@ -39,7 +39,7 @@ println!("{}", result.text);
 
 ## What it does
 
-**One implementation, two artifacts.** A single Cargo crate at the repository root with `[lib] crate-type = ["cdylib", "lib"]` and a `napi` feature flag. Rust consumers `cargo add cadmus` and never compile any napi code. Node consumers `npm install @ai-inquisitor/cadmus` and get a prebuilt `.node` binary plus a TypeScript surface — no Rust toolchain, no compiler, no CMake.
+**One implementation, two artifacts.** A single Cargo crate at the repository root with `[lib] crate-type = ["cdylib", "lib"]` and a `napi` feature flag. Rust consumers add `cadmus` as a git dependency (not yet on crates.io) and never compile any napi code. Node consumers `npm install @ai-inquisitor/cadmus` and get a prebuilt `.node` binary plus a TypeScript surface — no Rust toolchain, no compiler, no CMake.
 
 **Synchronous Rust core, async Node bridge.** Every operation in the core is a blocking `fn`. The crate has no executor dependency — async Rust callers wrap calls in `tokio::task::spawn_blocking` (or their runtime's equivalent). The Node bridge offloads each call to the libuv threadpool via napi-rs `AsyncTask` and returns a `Promise`. The Node event loop is never blocked.
 
@@ -125,7 +125,7 @@ GPU, Linux-arm64, and macOS-x64 are deferred and tracked in the [backlog](docs/b
 
 ## Build from source
 
-Most consumers don't need this. `npm install @ai-inquisitor/cadmus` ships the prebuilt `.node`; `cargo add cadmus` ships the rlib source.
+Most consumers don't need this. `npm install @ai-inquisitor/cadmus` ships the prebuilt `.node`; a `cadmus` git dependency ships the rlib source.
 
 Building yourself needs a C++ toolchain, CMake, Rust stable, and Node ≥ 22:
 
@@ -163,7 +163,7 @@ MIT (`LICENSE`). symphonia is MPL-2.0 — file-scoped copyleft, attribution in [
 
 ## LLM Reference
 
-Cadmus: a Whisper-transcription library shipped as a single Cargo crate (`cadmus`, crates.io) and a napi-rs Node binding (`@ai-inquisitor/cadmus`, npm) — same source, `napi` cargo feature flag toggles between rlib (Rust consumers) and cdylib (`.node` for Node consumers). Inference via `ct2rs 0.9.18` (which bundles CTranslate2 statically); audio pipeline pure-Rust (symphonia + in-house downmix + rubato). v1.0.0, MIT.
+Cadmus: a Whisper-transcription library shipped as a single Cargo crate (`cadmus`, consumed as a git dependency — not yet on crates.io) and a napi-rs Node binding (`@ai-inquisitor/cadmus`, npm) — same source, `napi` cargo feature flag toggles between rlib (Rust consumers) and cdylib (`.node` for Node consumers). Inference via `ct2rs 0.9.18` (which bundles CTranslate2 statically); audio pipeline pure-Rust (symphonia + in-house downmix + rubato). v1.0.0, MIT.
 
 **Architecture — why these choices:** Synchronous Rust core, async at the boundary. The crate has no executor dependency. Async Rust callers wrap in `tokio::task::spawn_blocking`; the Node bridge wraps each call in `napi::AsyncTask` and runs `compute()` on a libuv worker. This keeps runtime choice with the caller and the Node event loop unblocked. Single Cargo crate (`[lib] crate-type = ["cdylib", "lib"]`, `napi = ["dep:napi", "dep:napi-derive"]`) instead of a workspace — Rust consumers never compile any napi code; the same source produces both artifacts. CTranslate2 + Whisper rather than whisper.cpp because faster on CPU, smaller int8 models, production-tested via faster-whisper. ct2rs rather than hand-written FFI because it already wraps mel-spectrogram + tokenizer + decoder loop.
 
@@ -221,4 +221,4 @@ Cadmus ships prebuilt `.node` binaries for three platforms — macOS arm64, Linu
 
 Releases run through GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)): a manual `workflow_dispatch` builds all three binaries, bumps the version, commits the binaries, tags, and publishes to npm with provenance. The per-platform ct2rs feature subsets in `Cargo.toml`, the `package.json.files` allowlist, and the `index.ts` platform dispatch are the three places a new target must be wired.
 
-Single Cargo crate, no workspace. Rust consumers `cargo add cadmus` and never compile napi-rs. Node consumers `npm install @ai-inquisitor/cadmus` and never compile Rust. The crates.io tarball contains Rust source only; the npm tarball contains the prebuilt `.node` binaries plus a tiny TS/JS surface — see the packaging-allowlist invariant above.
+Single Cargo crate, no workspace. Rust consumers add `cadmus` as a git dependency (not yet on crates.io) and never compile napi-rs. Node consumers `npm install @ai-inquisitor/cadmus` and never compile Rust. The Rust source tarball (`cargo package`) contains Rust source only; the npm tarball contains the prebuilt `.node` binaries plus a tiny TS/JS surface — see the packaging-allowlist invariant above.

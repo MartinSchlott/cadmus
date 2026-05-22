@@ -20,7 +20,7 @@ Local-first applications — Electron desktop apps, on-prem servers, privacy-sen
 
 Cadmus is **one implementation distributed as two artifacts**:
 
-- `cadmus` (crates.io) — Rust library wrapping CTranslate2 (via the `ct2rs` crate) for Whisper inference, plus a pure-Rust audio pipeline (symphonia + rubato). Self-contained, blocking, no FFI escape hatch needed.
+- `cadmus` (Rust crate — consumed as a git dependency, not yet published to crates.io) — Rust library wrapping CTranslate2 (via the `ct2rs` crate) for Whisper inference, plus a pure-Rust audio pipeline (symphonia + rubato). Self-contained, blocking, no FFI escape hatch needed.
 - `@ai-inquisitor/cadmus` (npm) — napi-rs bridge over the Rust crate, in the same single Cargo crate behind a `napi` feature flag. Translation layer only. Zero JS runtime dependencies. Prebuilt binaries committed to the repository per platform.
 
 The Rust crate is the primary artifact. The npm package is a consumer of the crate, not an alternative path. **All logic lives in the crate**; the bridge maps types and offloads blocking work to the libuv threadpool — nothing else.

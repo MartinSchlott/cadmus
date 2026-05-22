@@ -45,7 +45,7 @@ The reason is separation of concerns: blocking inference is the truth, and offlo
 
 ## 2. Repository Structure
 
-A single Cargo crate at the repository root. `[lib] crate-type = ["cdylib", "lib"]` lets one source tree produce both the rlib (for Rust consumers via crates.io) and the cdylib (for napi-rs via npm). The napi bridge is gated behind a `napi` feature flag — Rust consumers never compile any napi code.
+A single Cargo crate at the repository root. `[lib] crate-type = ["cdylib", "lib"]` lets one source tree produce both the rlib (for Rust consumers via a git dependency) and the cdylib (for napi-rs via npm). The napi bridge is gated behind a `napi` feature flag — Rust consumers never compile any napi code.
 
 ```
 /
@@ -103,10 +103,10 @@ A single Cargo crate at the repository root. `[lib] crate-type = ["cdylib", "lib
 
 Two artifacts ship from this single root:
 
-- **crates.io tarball** — `Cargo.toml` declares an explicit `[package].include` allowlist (`/Cargo.toml`, `/Cargo.lock`, `/build.rs`, `/src/**/*.rs`, `/tests/**/*.rs`, `/fixtures/**`, `/LICENSE`, `/LICENSE-THIRD-PARTY`, `/README.md`). Patterns are root-anchored (leading `/`) — without anchoring, gitignore-glob semantics would pull `node_modules/**/LICENSE` into the published tarball. Everything else (`package.json`, `index.ts`, `*.node`, etc.) is excluded.
+- **Rust source tarball** (`cargo package`) — `Cargo.toml` declares an explicit `[package].include` allowlist (`/Cargo.toml`, `/Cargo.lock`, `/build.rs`, `/src/**/*.rs`, `/tests/**/*.rs`, `/fixtures/**`, `/LICENSE`, `/LICENSE-THIRD-PARTY`, `/README.md`). Patterns are root-anchored (leading `/`) — without anchoring, gitignore-glob semantics would pull `node_modules/**/LICENSE` into the tarball. Everything else (`package.json`, `index.ts`, `*.node`, etc.) is excluded.
 - **npm tarball** — `package.json.files` lists exactly `index.js`, `index.d.ts`, `types.js`, `types.d.ts`, both `.node` files, `LICENSE`, `LICENSE-THIRD-PARTY`, `README.md`. Rust source is excluded.
 
-Net result: the Rust consumer pulls source via crates.io. The npm consumer pulls the prebuilt binaries plus a tiny TS/JS surface. Neither artifact ships the other ecosystem's noise. Verification is part of the Release Runbook (see `docs/archive/CONCEPT_v1_buildout.md`).
+Net result: the Rust consumer pulls source via a git dependency. The npm consumer pulls the prebuilt binaries plus a tiny TS/JS surface. Neither artifact ships the other ecosystem's noise. Verification is part of the Release Runbook (see `docs/archive/CONCEPT_v1_buildout.md`).
 
 There is **no** workspace, no separate `cadmus-node/` crate, no `npm/` subdirectory, no whisper.cpp submodule, no own `build.rs` driving cmake-rs, no FFI module. CTranslate2's build is owned by `ct2rs`'s build script — it is invoked transitively by `cargo build`.
 
