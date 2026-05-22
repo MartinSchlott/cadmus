@@ -4,14 +4,14 @@ use rubato::{
     Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
 use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::{CodecParameters, DecoderOptions, CODEC_TYPE_NULL, CODEC_TYPE_OPUS};
+use symphonia::core::codecs::{CODEC_TYPE_NULL, CODEC_TYPE_OPUS, CodecParameters, DecoderOptions};
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::formats::{FormatOptions, FormatReader, Track};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
-use crate::opus::{apply_pre_skip, parse_opus_head, OpusDecoder};
+use crate::opus::{OpusDecoder, apply_pre_skip, parse_opus_head};
 
 pub(crate) const TARGET_SAMPLE_RATE: u32 = 16_000;
 
@@ -72,10 +72,11 @@ fn decode_interleaved(bytes: &[u8]) -> Result<(Vec<f32>, u32, u16), AudioError> 
     let sample_rate = codec_params
         .sample_rate
         .ok_or_else(|| AudioError::Decode("track lacks sample rate".into()))?;
-    let channels = codec_params
-        .channels
-        .ok_or_else(|| AudioError::Decode("track lacks channel layout".into()))?
-        .count() as u16;
+    // Track-level channel metadata is advisory: symphonia's isomp4 demuxer
+    // returns `CodecParameters.channels = None` for AAC-LC even though the
+    // decoded packets carry a fully-populated `AudioSpec`. Capture channels
+    // from the first decoded packet when codec_params doesn't supply it.
+    let mut channels: Option<u16> = codec_params.channels.map(|c| c.count() as u16);
 
     let mut decoder = symphonia::default::get_codecs()
         .make(&codec_params, &DecoderOptions::default())
@@ -101,6 +102,9 @@ fn decode_interleaved(bytes: &[u8]) -> Result<(Vec<f32>, u32, u16), AudioError> 
         match decoder.decode(&packet) {
             Ok(decoded) => {
                 let spec = *decoded.spec();
+                if channels.is_none() {
+                    channels = Some(spec.channels.count() as u16);
+                }
                 let duration = decoded.capacity() as u64;
                 let mut buf = SampleBuffer::<f32>::new(duration, spec);
                 buf.copy_interleaved_ref(decoded);
@@ -109,6 +113,10 @@ fn decode_interleaved(bytes: &[u8]) -> Result<(Vec<f32>, u32, u16), AudioError> 
             Err(e) => return Err(AudioError::Decode(format!("decode: {e}"))),
         }
     }
+
+    let channels = channels.ok_or_else(|| {
+        AudioError::Decode("no audio packets decoded; cannot infer channels".into())
+    })?;
 
     Ok((interleaved, sample_rate, channels))
 }
@@ -306,9 +314,7 @@ mod tests {
         let n = src_rate as usize;
         let mut sine = Vec::with_capacity(n);
         for i in 0..n {
-            sine.push(
-                (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / src_rate as f32).sin(),
-            );
+            sine.push((2.0 * std::f32::consts::PI * 1000.0 * i as f32 / src_rate as f32).sin());
         }
         let out = resample_to_target(&sine, src_rate).unwrap();
         assert!(

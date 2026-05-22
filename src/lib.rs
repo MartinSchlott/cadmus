@@ -10,17 +10,10 @@ mod storage;
 mod napi;
 
 pub use api::{
-    transcribe,
-    Cadmus, CadmusConfig, CadmusModel,
-    ComputeType,
-    DownloadModelOptions,
-    LoadModelOptions,
-    ModelRef,
-    Segment,
-    TranscribeOptions,
-    TranscriptResult,
+    Cadmus, CadmusConfig, CadmusModel, ComputeType, DownloadModelOptions, LoadModelOptions,
+    ModelRef, Segment, TranscribeOptions, TranscriptResult, transcribe,
 };
-pub use catalog::{ModelFamily, ModelInfo};
+pub use catalog::{FileSpec, ModelFamily, ModelInfo, ModelSpec, default_models};
 pub use error::CadmusError;
 
 pub struct Version {

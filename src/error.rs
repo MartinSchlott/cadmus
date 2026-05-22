@@ -24,7 +24,9 @@ impl std::fmt::Display for CadmusError {
             Self::Inference(m) => write!(f, "inference: {m}"),
             Self::Poisoned => write!(f, "internal lock poisoned"),
             Self::AlreadyFreed => write!(f, "model already freed"),
-            Self::UnknownModel(n) => write!(f, "unknown model: {n}"),
+            Self::UnknownModel(n) => {
+                write!(f, "model {n:?} not configured in this Cadmus instance")
+            }
             Self::Download(m) => write!(f, "download: {m}"),
             Self::Io(m) => write!(f, "io: {m}"),
         }

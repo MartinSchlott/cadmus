@@ -7,6 +7,7 @@ import type {
   LoadModelOptions,
   ModelInfo,
   ModelRef,
+  ModelSpec,
   TranscribeOptions,
   TranscriptResult,
   Version,
@@ -17,10 +18,12 @@ export type {
   CadmusError,
   ComputeType,
   DownloadModelOptions,
+  FileSpec,
   LoadModelOptions,
   ModelFamily,
   ModelInfo,
   ModelRef,
+  ModelSpec,
   Segment,
   TranscribeOptions,
   TranscriptResult,
@@ -41,6 +44,7 @@ interface NativeCadmus {
 
 interface NativeBinding {
   version(): Version;
+  defaultModels(): ModelSpec[];
   Cadmus: { new (config: CadmusConfig): NativeCadmus };
   transcribe(
     audio: Buffer,
@@ -65,6 +69,7 @@ if (platform === 'darwin' && arch === 'arm64') {
 }
 
 export const version = binding.version;
+export const defaultModels = binding.defaultModels;
 
 export type CadmusModel = NativeCadmusModel;
 

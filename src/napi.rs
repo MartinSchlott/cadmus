@@ -34,8 +34,8 @@
 
 use std::path::PathBuf;
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use napi::bindgen_prelude::{
     AbortSignal, AsyncTask, Buffer, FnArgs, Function, Object, Result, Task, Unknown,
@@ -50,7 +50,7 @@ use crate::catalog;
 use crate::error::CadmusError;
 
 type ProgressTsfn =
-    ThreadsafeFunction<FnArgs<(u32, u32)>, (), FnArgs<(u32, u32)>, Status, false, false, 0>;
+    ThreadsafeFunction<FnArgs<(f64, f64)>, (), FnArgs<(f64, f64)>, Status, false, false, 0>;
 
 // ---------------------------------------------------------------------------
 // Error helpers
@@ -117,7 +117,11 @@ fn async_err_with_code(env_raw: sys::napi_env, code: &str, msg: &str) -> napi::E
 /// `reject()` (Task's compute returns `napi::Error<Status>`, which would
 /// otherwise lose the variant). Each Task stashes the typed error into
 /// `Self::stash` on failure; reject() reads it.
-fn stashed_async_err(env: Env, stash: &mut Option<CadmusError>, fallback: napi::Error) -> napi::Error {
+fn stashed_async_err(
+    env: Env,
+    stash: &mut Option<CadmusError>,
+    fallback: napi::Error,
+) -> napi::Error {
     match stash.take() {
         Some(e) => async_err_with_code(env.raw(), err_code(&e), &e.to_string()),
         None => async_err_with_code(env.raw(), "GenericFailure", &fallback.reason),
@@ -153,42 +157,126 @@ pub fn version() -> VersionJs {
 // ---------------------------------------------------------------------------
 
 #[napi(object)]
+pub struct FileSpecJs {
+    pub filename: String,
+    pub url: String,
+}
+
+#[napi(object)]
+pub struct ModelSpecJs {
+    pub name: String,
+    pub description: String,
+    /// Total bytes across all files. JS `number` is f64; integer-exact up to
+    /// 2^53 (~9 PB).
+    pub size_bytes: f64,
+    /// `"whisper"` or `"distil_whisper"`.
+    pub family: String,
+    pub multilingual: bool,
+    pub files: Vec<FileSpecJs>,
+}
+
+fn family_to_str(f: &catalog::ModelFamily) -> &'static str {
+    match f {
+        catalog::ModelFamily::Whisper => "whisper",
+        catalog::ModelFamily::DistilWhisper => "distil_whisper",
+    }
+}
+
+fn family_from_str(s: &str) -> Option<catalog::ModelFamily> {
+    match s {
+        "whisper" => Some(catalog::ModelFamily::Whisper),
+        "distil_whisper" => Some(catalog::ModelFamily::DistilWhisper),
+        _ => None,
+    }
+}
+
+impl From<catalog::ModelSpec> for ModelSpecJs {
+    fn from(m: catalog::ModelSpec) -> Self {
+        ModelSpecJs {
+            name: m.name,
+            description: m.description,
+            size_bytes: m.size_bytes as f64,
+            family: family_to_str(&m.family).to_string(),
+            multilingual: m.multilingual,
+            files: m
+                .files
+                .into_iter()
+                .map(|f| FileSpecJs {
+                    filename: f.filename,
+                    url: f.url,
+                })
+                .collect(),
+        }
+    }
+}
+
+impl ModelSpecJs {
+    fn into_core(self, env: Env) -> Result<catalog::ModelSpec> {
+        let family = family_from_str(&self.family).ok_or_else(|| {
+            throw_with_code(
+                env,
+                "InvalidArgument",
+                format!("unknown ModelSpec.family: {:?}", self.family),
+            )
+        })?;
+        Ok(catalog::ModelSpec {
+            name: self.name,
+            description: self.description,
+            size_bytes: self.size_bytes as u64,
+            family,
+            multilingual: self.multilingual,
+            files: self
+                .files
+                .into_iter()
+                .map(|f| catalog::FileSpec {
+                    filename: f.filename,
+                    url: f.url,
+                })
+                .collect(),
+        })
+    }
+}
+
+#[napi(object)]
 pub struct CadmusConfigJs {
     pub model_cache: String,
+    pub models: Vec<ModelSpecJs>,
 }
 
 #[napi(object)]
 pub struct ModelInfoJs {
     pub name: String,
     pub description: String,
-    /// Total bytes across all model files. JS `number` is f64; safe up to
-    /// 2^53. Largest catalog entry is ~3 GB.
+    /// Total bytes across all model files. JS `number` is f64; integer-exact
+    /// up to 2^53 (~9 PB).
     pub size_bytes: f64,
     /// `"whisper"` or `"distil_whisper"`.
     pub family: String,
     pub multilingual: bool,
     pub cached: bool,
-    pub repo: String,
     pub files: Vec<String>,
 }
 
 impl From<catalog::ModelInfo> for ModelInfoJs {
     fn from(m: catalog::ModelInfo) -> Self {
-        let family = match m.family {
-            catalog::ModelFamily::Whisper => "whisper",
-            catalog::ModelFamily::DistilWhisper => "distil_whisper",
-        };
         ModelInfoJs {
             name: m.name,
             description: m.description,
             size_bytes: m.size_bytes as f64,
-            family: family.to_string(),
+            family: family_to_str(&m.family).to_string(),
             multilingual: m.multilingual,
             cached: m.cached,
-            repo: m.repo,
             files: m.files,
         }
     }
+}
+
+#[napi(js_name = "defaultModels")]
+pub fn default_models_js() -> Vec<ModelSpecJs> {
+    catalog::default_models()
+        .into_iter()
+        .map(ModelSpecJs::from)
+        .collect()
 }
 
 #[napi(object)]
@@ -239,7 +327,10 @@ impl LoadModelOptionsJs {
                 ));
             }
         };
-        Ok(api::LoadModelOptions { threads: self.threads, compute_type })
+        Ok(api::LoadModelOptions {
+            threads: self.threads,
+            compute_type,
+        })
     }
 }
 
@@ -251,7 +342,10 @@ pub struct TranscribeOptionsJs {
 
 impl From<TranscribeOptionsJs> for api::TranscribeOptions {
     fn from(o: TranscribeOptionsJs) -> Self {
-        api::TranscribeOptions { language: o.language, beam_size: o.beam_size }
+        api::TranscribeOptions {
+            language: o.language,
+            beam_size: o.beam_size,
+        }
     }
 }
 
@@ -277,7 +371,11 @@ impl From<api::TranscriptResult> for TranscriptResultJs {
             segments: r
                 .segments
                 .into_iter()
-                .map(|s| SegmentJs { start: s.start as f64, end: s.end as f64, text: s.text })
+                .map(|s| SegmentJs {
+                    start: s.start as f64,
+                    end: s.end as f64,
+                    text: s.text,
+                })
                 .collect(),
         }
     }
@@ -296,11 +394,18 @@ pub struct Cadmus {
 impl Cadmus {
     #[napi(constructor)]
     pub fn new(env: Env, config: CadmusConfigJs) -> Result<Self> {
+        let mut models: Vec<catalog::ModelSpec> = Vec::with_capacity(config.models.len());
+        for m in config.models {
+            models.push(m.into_core(env)?);
+        }
         let inner = api::Cadmus::new(api::CadmusConfig {
             model_cache: PathBuf::from(config.model_cache),
+            models,
         })
         .map_err(|e| throw_cadmus(env, e))?;
-        Ok(Self { inner: Arc::new(inner) })
+        Ok(Self {
+            inner: Arc::new(inner),
+        })
     }
 
     #[napi]
@@ -331,20 +436,20 @@ impl Cadmus {
         name: String,
         options: Option<Object<'_>>,
     ) -> Result<AsyncTask<DownloadTask>> {
-        let entry = match catalog::lookup(&name) {
-            Some(e) => e,
+        let total_size = match self.inner.spec(&name) {
+            Some(spec) => spec.size_bytes,
             None => {
                 return Err(throw_with_code(
                     env,
                     "UnknownModel",
-                    format!("unknown model: {name}"),
+                    format!("model {name:?} not configured in this Cadmus instance"),
                 ));
             }
         };
 
         let (on_progress, signal) = match options.as_ref() {
             Some(o) => (
-                o.get::<Function<FnArgs<(u32, u32)>, ()>>("onProgress")
+                o.get::<Function<FnArgs<(f64, f64)>, ()>>("onProgress")
                     .map_err(|e| {
                         throw_with_code(env, "InvalidArgument", format!("invalid onProgress: {e}"))
                     })?,
@@ -363,7 +468,7 @@ impl Cadmus {
 
         let tsfn = match on_progress {
             Some(f) => Some(
-                f.build_threadsafe_function::<FnArgs<(u32, u32)>>()
+                f.build_threadsafe_function::<FnArgs<(f64, f64)>>()
                     .build()
                     .map_err(|e| {
                         throw_with_code(
@@ -381,7 +486,7 @@ impl Cadmus {
             name,
             cancel,
             tsfn,
-            total_size: entry.size_bytes,
+            total_size,
             stash: None,
         }))
     }
@@ -395,11 +500,11 @@ impl Cadmus {
     ) -> Result<AsyncTask<LoadTask>> {
         let core_ref = model_ref.into_core(env)?;
         if let api::ModelRef::Name(n) = &core_ref {
-            if catalog::lookup(n).is_none() {
+            if self.inner.spec(n).is_none() {
                 return Err(throw_with_code(
                     env,
                     "UnknownModel",
-                    format!("unknown model: {n}"),
+                    format!("model {n:?} not configured in this Cadmus instance"),
                 ));
             }
         }
@@ -439,16 +544,14 @@ impl CadmusModel {
         options: Option<TranscribeOptionsJs>,
     ) -> Result<AsyncTask<TranscribeTask>> {
         if self.freed.load(Ordering::SeqCst) {
-            return Err(throw_with_code(
-                env,
-                "AlreadyFreed",
-                "model already freed",
-            ));
+            return Err(throw_with_code(env, "AlreadyFreed", "model already freed"));
         }
         Ok(AsyncTask::new(TranscribeTask {
             model: Arc::clone(&self.inner),
             audio,
-            options: options.map(api::TranscribeOptions::from).unwrap_or_default(),
+            options: options
+                .map(api::TranscribeOptions::from)
+                .unwrap_or_default(),
             stash: None,
         }))
     }
@@ -470,7 +573,9 @@ pub fn transcribe_oneshot(
     AsyncTask::new(OneShotTranscribeTask {
         audio,
         model_path: PathBuf::from(model_path),
-        options: options.map(api::TranscribeOptions::from).unwrap_or_default(),
+        options: options
+            .map(api::TranscribeOptions::from)
+            .unwrap_or_default(),
         stash: None,
     })
 }
@@ -522,8 +627,8 @@ impl Task for DownloadTask {
                 }
                 last.store(received, Ordering::SeqCst);
                 let cum = committed.load(Ordering::SeqCst).saturating_add(received);
-                let r = cum.min(total).min(u64::from(u32::MAX)) as u32;
-                let t = total.min(u64::from(u32::MAX)) as u32;
+                let r = cum.min(total) as f64;
+                let t = total as f64;
                 tsfn.call((r, t).into(), ThreadsafeFunctionCallMode::NonBlocking);
             });
             f
@@ -681,7 +786,6 @@ mod tests {
             family: catalog::ModelFamily::Whisper,
             multilingual: true,
             cached: false,
-            repo: "r".into(),
             files: vec!["f".into()],
         };
         let js: ModelInfoJs = m.into();
@@ -694,7 +798,6 @@ mod tests {
             family: catalog::ModelFamily::DistilWhisper,
             multilingual: false,
             cached: true,
-            repo: "r".into(),
             files: vec!["f".into()],
         };
         let js2: ModelInfoJs = m2.into();

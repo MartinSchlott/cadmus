@@ -71,7 +71,7 @@ A single Cargo crate at the repository root. `[lib] crate-type = ["cdylib", "lib
 ├── src/
 │   ├── lib.rs                      # public Rust API + #[cfg(feature = "napi")] bridge re-exports
 │   ├── api.rs                      # Cadmus, CadmusModel, ModelRef, options structs, transcribe one-shot
-│   ├── catalog.rs                  # 17-entry static catalog (D14): Whisper + Distil-Whisper
+│   ├── catalog.rs                  # ModelSpec / FileSpec types + default_models() (6 multilingual entries)
 │   ├── decode.rs                   # symphonia + rubato + downmix → Vec<f32> @ 16 kHz mono;
 │   │                               #   Opus packets routed to src/opus.rs (R1 pre-skip honoured)
 │   ├── error.rs                    # CadmusError + AudioError + InferenceError variants
@@ -80,8 +80,9 @@ A single Cargo crate at the repository root. `[lib] crate-type = ["cdylib", "lib
 │   ├── napi.rs                     # napi-rs bridge (compiled only with --features napi)
 │   ├── opus.rs                     # safe wrapper over unsafe-libopus; OpusHead parser,
 │   │                               #   pre-skip helper; only `unsafe` block in the crate
-│   └── storage.rs                  # HuggingFace downloader (ureq + rustls), find_model,
-│                                   #   ensure_present
+│   └── storage.rs                  # URL-driven downloader (ureq + rustls for http(s);
+│                                   #   percent-decoded file:// for local sources), find_model,
+│                                   #   ensure_present_files
 ├── fixtures/
 │   ├── eins-zwei-drei.mp3          # ≈ 2.9 s synthesized German numerals @ 22 050 Hz (master)
 │   ├── eins-zwei-drei.wav          # same recording, PCM-16 @ 44 100 Hz
@@ -93,6 +94,7 @@ A single Cargo crate at the repository root. `[lib] crate-type = ["cdylib", "lib
 │   ├── public_api.rs               # Rust integration tests (rlib path; gated off under --features napi)
 │   ├── catalog.test.mjs            # node --test
 │   ├── download.test.mjs           # node --test
+│   ├── file_url.test.mjs           # node --test (custom ModelSpec via file://)
 │   ├── lifecycle.test.mjs          # node --test
 │   ├── transcribe.test.mjs         # node --test
 │   ├── version.test.mjs            # node --test
@@ -256,29 +258,30 @@ Windows (`x86_64-pc-windows-msvc`), Linux-arm64, and macOS-x64 are deferred — 
 
 `fixtures/eins-zwei-drei.{mp3,wav,flac,webm,m4a}` — ≈ 2.9 s of synthesized German numerals ("eins, zwei, drei, vier, fünf") in five containers (MP3, WAV PCM-16, FLAC, WebM/Opus, MP4/AAC-LC) at three distinct sample rates (22 050 Hz from MP3; 44 100 Hz shared by WAV and m4a; 48 000 Hz shared by FLAC and webm), all derived from the same MP3 master via ffmpeg so cross-format decoded length agrees within ~2 048 samples. The webm and m4a fixtures match the two browser `MediaRecorder` defaults (Chromium/Firefox emit WebM/Opus; Safari emits MP4/AAC). The three rates ensure rubato's resampler is exercised on every test run regardless of which fixture is loaded. Checked into the repository.
 
-The end-to-end smoke test downloads `Systran/faster-whisper-tiny` (the smallest CTranslate2 Whisper model, ~75 MB), transcribes the MP3 fixture, and asserts the result contains the expected 1/2/3 markers in either spoken (eins/zwei/drei) or digit form. This exercises symphonia decoding, downmix, rubato resampling, ct2rs's mel + tokenizer + inference path, our segment parser, and (in the Node leg) napi-rs marshalling.
+The end-to-end smoke test downloads the float16 CT2 `tiny` model from `ctranslate2-4you/whisper-tiny-ct2-float16` (~75 MB), transcribes the MP3 fixture, and asserts the result contains the expected 1/2/3 markers in either spoken (eins/zwei/drei) or digit form. This exercises symphonia decoding, downmix, rubato resampling, ct2rs's mel + tokenizer + inference path, our segment parser, and (in the Node leg) napi-rs marshalling.
 
 ### 8.2 Layers
 
 **Rust unit tests** (`src/**/*.rs`, run by `cargo test [--features napi]`):
-- `decode`: mono passthrough, stereo cancellation, MP3/WAV/FLAC/WebM-Opus/MP4-AAC fixtures, 48 k → 16 k resample, fixture length consistency across all five formats, corrupt-audio decode error.
+- `decode`: mono passthrough, stereo cancellation, MP3/WAV/FLAC/WebM-Opus/MP4-AAC fixtures, 48 k → 16 k resample, fixture length consistency across all five formats, corrupt-audio decode error. AAC-LC channel count is inferred from the first decoded packet's `AudioSpec` because symphonia's `isomp4` demuxer leaves `CodecParameters.channels = None`.
 - `opus`: OpusHead parsing (pre-skip + channels extracted at the right offsets), mapping-family-non-zero rejected with `Decode`, pre-skip helper drops exactly `pre_skip * channels` samples.
 - `inference`: segment-token parser (control tokens, malformed tokens, no-timestamps, multi-chunk, multi-segment, UTF-8), language-detection-from-chunks helpers, end-to-end `eins_zwei_drei` (downloads tiny via `storage`, decodes, infers, asserts), `eins_zwei_drei_via_webm` (same path through the WebM/Opus fixture, proves Opus reaches ct2rs intact), three D4 lifecycle tests (`transcribe_after_free`, `free_during_inflight`, `concurrent_transcribe`).
-- `storage`: `download_tiny_smoke`, `ensure_present_distinguishes_states`, cancel-before-call, cancel-mid-stream against a local mock server, progress callback against a local mock server.
+- `storage`: `download_tiny_smoke`, `ensure_present_distinguishes_states`, cancel-before-call, cancel-mid-stream against a local mock server, progress callback against a local mock server, `percent_decode_basic`, `file_url_to_path_unix` (or `_windows_drive_letter` under `cfg(windows)`), `fetch_one_file_url_copies_local_file`.
 - `napi` (only with `--features napi`): error-code coverage, `ModelInfo`/`family` round-trip.
 - `version_returns_three_string_fields`.
 
-**Rust integration tests** (`tests/public_api.rs`, run by `cargo test` *without* `--features napi`): exercise the public Rust API surface end-to-end — `Cadmus::new` cache creation and IO failure, 17-entry catalog assertions, `UnknownModel` against `download_model` / `load_model` / `find_model`, tiny round-trip via the `Cadmus` handle, one-shot `transcribe(audio, &Path, opts)`, `language == None` accepted-deviation assertion. The file is gated `#![cfg(not(feature = "napi"))]` because integration tests link against the rlib, and the rlib compiled with `--features napi` references N-API runtime symbols that only exist inside Node's process — those would fail to resolve in a standalone test binary. Two Rust test modes therefore exist and both are part of release verification:
+**Rust integration tests** (`tests/public_api.rs`, run by `cargo test` *without* `--features napi`): exercise the public Rust API surface end-to-end — `Cadmus::new` cache creation and IO failure, the 6 default `ModelSpec` entries returned by `default_models()`, `UnknownModel` against `download_model` / `load_model` / `find_model`, empty-`models` config validity, tiny round-trip via the `Cadmus` handle, one-shot `transcribe(audio, &Path, opts)`, `language == None` accepted-deviation assertion. The file is gated `#![cfg(not(feature = "napi"))]` because integration tests link against the rlib, and the rlib compiled with `--features napi` references N-API runtime symbols that only exist inside Node's process — those would fail to resolve in a standalone test binary. Two Rust test modes therefore exist and both are part of release verification:
 
-- `cargo test --features napi` — runs the unit tests inside `src/` (28 of them at v1.0.0). The integration file resolves to zero tests.
-- `cargo test` (no features) — runs the unit tests *and* the `tests/public_api.rs` integration tests against the public Rust surface.
+- `cargo test --features napi` — runs the unit tests inside `src/` (37 at v2.0.0). The integration file resolves to zero tests.
+- `cargo test` (no features) — runs the unit tests (35 at v2.0.0) *and* the integration tests in `tests/public_api.rs` (8 at v2.0.0) against the public Rust surface.
 
 The Release Runbook (`docs/archive/CONCEPT_v1_buildout.md`) treats both as required before publishing.
 
 **Node.js integration tests** (`tests/*.test.mjs`, run by `npm test` → `node --test --test-concurrency=1`):
 - `version.test.mjs` — `version()` returns three string fields.
 - `wav_helper.test.mjs` — `tests/_helpers/wav.mjs::padWavWithSilence` produces a transcribable WAV.
-- `catalog.test.mjs` — 17 entries (12 whisper + 5 distil_whisper), populated metadata, `.en` entries flagged `multilingual === false`, `findModel('nonexistent')` returns `null`, `loadModel({ name: 'nonexistent' })` rejects with `code === 'UnknownModel'`, `loadModel({ name, path })` and `loadModel({})` reject with `code === 'InvalidArgument'`.
+- `catalog.test.mjs` — `defaultModels()` returns 6 multilingual whisper entries with the expected names and URLs; `listAvailableModels()` mirrors that list when constructed with `models: defaultModels()`; populated metadata; `findModel('nonexistent')` returns `null`; `loadModel({ name: 'nonexistent' })` rejects with `code === 'UnknownModel'`; `loadModel({ name, path })` and `loadModel({})` reject with `code === 'InvalidArgument'`; empty-`models` config yields an empty list.
+- `file_url.test.mjs` — registers a custom `ModelSpec` whose files use `file://` URLs (including a percent-encoded path) and asserts `downloadModel` copies the source byte-for-byte into the cache.
 - `transcribe.test.mjs` — handle path: `loadModel({ name: 'tiny' }).transcribe(mp3, { language: 'de' })` returns segments with the eins/zwei/drei markers, then `model.free()` plus a fresh `transcribe` rejects with `code === 'AlreadyFreed'`. One-shot path: `transcribe(mp3, modelPath, { language: 'de' })` returns the same content.
 - `lifecycle.test.mjs` — three lifecycle invariants across the napi/AsyncTask boundary: free-after-free idempotency, free-during-inflight (synthesised long WAV, in-flight Promise resolves while next call rejects with `AlreadyFreed`), concurrent `Promise.all([transcribe, transcribe])`.
 - `download.test.mjs` — happy-path `downloadModel('tiny', { onProgress })` against a fresh `mkdtempSync` cache: callback fires with monotonic `received` and constant `total`; `findModel('tiny')` after returns the same directory.
@@ -299,23 +302,24 @@ The conceptual surface is defined in [definition.md §4](definition.md). This se
 
 ```rust
 use cadmus::{
-    transcribe, version,
+    default_models, transcribe, version,
     Cadmus, CadmusConfig, CadmusModel,
-    ModelRef, ModelInfo, ModelFamily,
+    FileSpec, ModelRef, ModelInfo, ModelFamily, ModelSpec,
     LoadModelOptions, TranscribeOptions, DownloadModelOptions,
     TranscriptResult, Segment,
     CadmusError, ComputeType, Version,
 };
 use std::path::PathBuf;
 
-// Construct the handle once with explicit cache config.
+// Construct the handle once with explicit cache + catalog config.
 let cadmus = Cadmus::new(CadmusConfig {
     model_cache: PathBuf::from("/var/cache/myapp/whisper"),
+    models: cadmus::default_models(),
 })?;
 
-// Catalog inspection.
+// Catalog inspection (returns what the consumer configured).
 let models: Vec<ModelInfo> = cadmus.list_available_models();
-if let Some(t) = models.iter().find(|m| m.name == "base" && !m.cached) {
+if let Some(_t) = models.iter().find(|m| m.name == "base" && !m.cached) {
     cadmus.download_model("base", DownloadModelOptions::default())?;
 }
 
@@ -382,6 +386,29 @@ pub enum ModelRef<'a> {
     Path(&'a std::path::Path),
 }
 // Plus From<&str>, From<String>, From<&Path>, From<PathBuf> for ergonomic call sites.
+
+pub struct CadmusConfig {
+    pub model_cache: std::path::PathBuf,
+    pub models:      Vec<ModelSpec>,    // pass `default_models()` for the 6 built-in defaults
+}
+
+#[derive(Clone)]
+pub struct ModelSpec {
+    pub name:         String,
+    pub description:  String,
+    pub size_bytes:   u64,
+    pub family:       ModelFamily,
+    pub multilingual: bool,
+    pub files:        Vec<FileSpec>,
+}
+
+#[derive(Clone)]
+pub struct FileSpec {
+    pub filename: String,
+    pub url:      String,   // http(s):// or file:// (percent-decoded)
+}
+
+pub fn default_models() -> Vec<ModelSpec>;
 ```
 
 `DownloadModelOptions::cancel` is cooperative: the download loop checks the flag between chunks. There is no preemptive cancellation. The JS side's `AbortSignal` maps to setting this flag.
@@ -390,10 +417,10 @@ pub enum ModelRef<'a> {
 
 ```typescript
 import {
-  Cadmus, CadmusModel, transcribe, version,
+  Cadmus, CadmusModel, defaultModels, transcribe, version,
   CadmusConfig, CadmusError, ComputeType,
   DownloadModelOptions, LoadModelOptions, TranscribeOptions,
-  ModelFamily, ModelInfo, ModelRef,
+  FileSpec, ModelFamily, ModelInfo, ModelRef, ModelSpec,
   Segment, TranscriptResult, Version,
 } from '@ai-inquisitor/cadmus';
 
@@ -411,7 +438,24 @@ interface CadmusInstance {
 
 interface CadmusConfig {
   modelCache: string             // explicit cache directory
+  models: ModelSpec[]            // explicit catalog; pass `defaultModels()` for the 6 built-in defaults
 }
+
+interface ModelSpec {
+  name: string
+  description: string
+  sizeBytes: number
+  family: ModelFamily
+  multilingual: boolean
+  files: FileSpec[]
+}
+
+interface FileSpec {
+  filename: string
+  url: string                    // https://, http://, or file:// (percent-decoded)
+}
+
+function defaultModels(): ModelSpec[]
 
 type ModelRef =                   // discriminated union
   | { name: string }              // resolved against the configured cache
@@ -474,8 +518,7 @@ interface ModelInfo {
   family: ModelFamily
   multilingual: boolean
   cached: boolean                  // computed at call time
-  repo: string
-  files: string[]
+  files: string[]                  // filenames only; URLs live on the underlying ModelSpec
 }
 
 // Type-only narrowing — runtime is a plain Error with `code` set.

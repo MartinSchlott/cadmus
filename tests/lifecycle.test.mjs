@@ -6,7 +6,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { Cadmus } from '../index.js';
-import { sharedCache, ensureTinyDownloaded } from './_helpers/cache.mjs';
+import { defaultCadmusConfig, ensureTinyDownloaded } from './_helpers/cache.mjs';
 import { padWavWithSilence } from './_helpers/wav.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -22,7 +22,7 @@ function assertEinsZweiDrei(text) {
 }
 
 async function loadTinyModel() {
-  const cadmus = new Cadmus({ modelCache: sharedCache() });
+  const cadmus = new Cadmus(defaultCadmusConfig());
   await ensureTinyDownloaded(cadmus);
   return cadmus.loadModel({ name: 'tiny' });
 }

@@ -56,8 +56,8 @@ impl InferenceHandle {
         model_dir: &Path,
         config: Config,
     ) -> Result<Self, InferenceError> {
-        let whisper = Whisper::new(model_dir, config)
-            .map_err(|e| InferenceError::Load(e.to_string()))?;
+        let whisper =
+            Whisper::new(model_dir, config).map_err(|e| InferenceError::Load(e.to_string()))?;
         Ok(Self {
             inner: Mutex::new(Some(Arc::new(whisper))),
             freed: AtomicBool::new(false),
@@ -98,7 +98,10 @@ impl InferenceHandle {
 
         let detected_language = detect_language_from_chunks(&chunks);
         let segments = parse_segments(&chunks);
-        Ok(InferenceOutput { segments, detected_language })
+        Ok(InferenceOutput {
+            segments,
+            detected_language,
+        })
     }
 
     pub(crate) fn free(&self) {
@@ -234,8 +237,9 @@ fn find_token_end(bytes: &[u8], from: usize) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::catalog::{FileSpec, default_models};
     use crate::decode::decode_to_pcm16k;
-    use crate::storage::{TINY, download, ensure_present, test_cache_dir, test_cache_lock};
+    use crate::storage::{download, ensure_present_files, test_cache_dir, test_cache_lock};
 
     use std::fs;
     use std::path::PathBuf;
@@ -244,22 +248,30 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
+    fn tiny_files() -> Vec<FileSpec> {
+        default_models()
+            .into_iter()
+            .find(|m| m.name == "tiny")
+            .expect("default_models missing tiny")
+            .files
+    }
+
     fn ensure_tiny() -> PathBuf {
         let _guard = test_cache_lock();
         let dir = test_cache_dir().join("tiny");
-        let ready = ensure_present(&TINY, &dir) && InferenceHandle::new(&dir).is_ok();
+        let files = tiny_files();
+        let ready = ensure_present_files(&files, &dir) && InferenceHandle::new(&dir).is_ok();
         if !ready {
             let _ = fs::remove_dir_all(&dir);
-            download(&TINY, &dir, None, None).expect("staging tiny failed");
+            download(&files, &dir, None, None).expect("staging tiny failed");
             InferenceHandle::new(&dir).expect("load staged tiny");
         }
-        assert!(ensure_present(&TINY, &dir));
+        assert!(ensure_present_files(&files, &dir));
         dir
     }
 
     fn fixture_bytes() -> Vec<u8> {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("fixtures/eins-zwei-drei.mp3");
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/eins-zwei-drei.mp3");
         fs::read(&path).unwrap_or_else(|_| panic!("fixture missing: {:?}", path))
     }
 
@@ -316,8 +328,7 @@ mod tests {
     fn eins_zwei_drei_via_webm() {
         let dir = ensure_tiny();
         let handle = InferenceHandle::new(&dir).expect("load tiny");
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("fixtures/eins-zwei-drei.webm");
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/eins-zwei-drei.webm");
         let bytes = fs::read(&path).unwrap_or_else(|_| panic!("fixture missing: {:?}", path));
         let samples = decode_to_pcm16k(&bytes).expect("decode webm fixture failed");
 
@@ -459,12 +470,14 @@ mod tests {
 
     #[test]
     fn parse_segments_drops_control_tokens_keeps_utf8_text() {
-        let chunks = vec![
-            "<|de|><|transcribe|><|0.00|> grüß dich.<|1.20|>".to_string(),
-        ];
+        let chunks = vec!["<|de|><|transcribe|><|0.00|> grüß dich.<|1.20|>".to_string()];
         let segs = parse_segments(&chunks);
         assert_eq!(segs.len(), 1);
-        assert!(segs[0].text.contains("grüß"), "umlaut lost: {:?}", segs[0].text);
+        assert!(
+            segs[0].text.contains("grüß"),
+            "umlaut lost: {:?}",
+            segs[0].text
+        );
     }
 
     #[test]

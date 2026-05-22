@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { Cadmus, transcribe } from '../index.js';
-import { sharedCache, ensureTinyDownloaded } from './_helpers/cache.mjs';
+import { defaultCadmusConfig, ensureTinyDownloaded } from './_helpers/cache.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixtureMp3 = readFileSync(resolve(here, '..', 'fixtures', 'eins-zwei-drei.mp3'));
@@ -21,7 +21,7 @@ function assertEinsZweiDrei(text) {
 }
 
 test('handle path: load tiny → transcribe fixture mp3 → segments + AlreadyFreed', async () => {
-  const cadmus = new Cadmus({ modelCache: sharedCache() });
+  const cadmus = new Cadmus(defaultCadmusConfig());
   await ensureTinyDownloaded(cadmus);
   const model = await cadmus.loadModel({ name: 'tiny' });
   try {
@@ -40,7 +40,7 @@ test('handle path: load tiny → transcribe fixture mp3 → segments + AlreadyFr
 });
 
 test('one-shot transcribe(audio, modelPath, opts) against cached tiny', async () => {
-  const cadmus = new Cadmus({ modelCache: sharedCache() });
+  const cadmus = new Cadmus(defaultCadmusConfig());
   await ensureTinyDownloaded(cadmus);
   const dir = cadmus.findModel('tiny');
   assert.ok(dir, 'tiny not cached after ensureTinyDownloaded');

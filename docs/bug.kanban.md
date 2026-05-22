@@ -133,6 +133,34 @@ id: fpxmyg2qwsy8kuxtv3lzrige
 ## Done
 id: 9bd2g6q54xi7cfr0hhnqzls0
 
+### `decode_m4a_aac_to_pcm16k` and `fixtures_have_consistent_length` panic on `track lacks channel layout`
+id: m4a-channels-missing-2026-05-22
+severity: high
+priority: medium
+
+`cargo test --lib` failed in `src/decode.rs::decode_m4a_aac_to_pcm16k`
+and `src/decode.rs::fixtures_have_consistent_length` with
+`Decode("track lacks channel layout")`. Symphonia's `isomp4` demuxer
+returns `CodecParameters` for the AAC-LC track with `channels = None`,
+so the previous upfront check rejected the fixture before any packet
+was decoded.
+
+Introduced by commit `688f425 feat(audio): WebM/Opus + MP4/AAC-LC via
+symphonia features and unsafe-libopus`; the `decode_m4a_aac_to_pcm16k`
+test was added in the same commit but the failure was not caught at
+landing time.
+
+Fixed under the scope extension to `PLAN_explicit_model_catalog`
+(Human-approved on 2026-05-22): track-level channel metadata is now
+treated as advisory. `decode_interleaved` carries
+`channels: Option<u16>` initialised from `codec_params.channels` and
+falls back to the first decoded packet's `Decoded::spec().channels`
+when the demuxer omits it. The five-format `decode_*_to_pcm16k` tests
+and `fixtures_have_consistent_length` all pass on darwin-arm64; no
+regression on MP3 / WAV / FLAC / WebM-Opus paths because they still
+report `channels` in codec-params and the inferred-from-packet value
+matches.
+
 ### Test cache race in `cargo test` between `storage` and `inference` test modules
 id: g7xihcn90hcv18bemmkptaos
 severity: medium

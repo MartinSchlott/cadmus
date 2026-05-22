@@ -4,12 +4,13 @@ import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { Cadmus } from '../index.js';
+import { Cadmus, defaultModels } from '../index.js';
 
 test('downloadModel happy path with progress (fresh temp cache)', async () => {
   const cache = mkdtempSync(join(tmpdir(), 'cadmus-download-'));
   try {
-    const cadmus = new Cadmus({ modelCache: cache });
+    const cadmus = new Cadmus({ modelCache: cache, models: defaultModels() });
+    const tinyExpected = defaultModels().find((m) => m.name === 'tiny');
     let total = null;
     let lastReceived = 0;
     let count = 0;
@@ -26,6 +27,8 @@ test('downloadModel happy path with progress (fresh temp cache)', async () => {
     assert.ok(existsSync(dir), `download dir missing: ${dir}`);
     assert.ok(count > 0, 'no progress callbacks fired');
     assert.equal(cadmus.findModel('tiny'), dir);
+    assert.equal(total, tinyExpected.sizeBytes,
+      'progress total must match the spec sizeBytes');
   } finally {
     rmSync(cache, { recursive: true, force: true });
   }

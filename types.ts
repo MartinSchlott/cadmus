@@ -11,6 +11,20 @@ export interface Version {
 
 export type ModelFamily = 'whisper' | 'distil_whisper';
 
+export interface FileSpec {
+  filename: string;
+  url: string;
+}
+
+export interface ModelSpec {
+  name: string;
+  description: string;
+  sizeBytes: number;
+  family: ModelFamily;
+  multilingual: boolean;
+  files: FileSpec[];
+}
+
 export interface ModelInfo {
   name: string;
   description: string;
@@ -18,7 +32,6 @@ export interface ModelInfo {
   family: ModelFamily;
   multilingual: boolean;
   cached: boolean;
-  repo: string;
   files: string[];
 }
 
@@ -55,6 +68,7 @@ export type ModelRef = { name: string } | { path: string };
 
 export interface CadmusConfig {
   modelCache: string;
+  models: ModelSpec[];
 }
 
 // CadmusError is a runtime `Error` whose `code` field carries the variant

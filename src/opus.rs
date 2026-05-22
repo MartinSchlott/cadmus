@@ -73,8 +73,7 @@ impl OpusDecoder {
     }
 
     pub(crate) fn decode_packet(&mut self, packet: &[u8]) -> Result<Vec<f32>, AudioError> {
-        let mut buf =
-            vec![0f32; MAX_FRAME_SAMPLES_PER_CHANNEL as usize * self.channels as usize];
+        let mut buf = vec![0f32; MAX_FRAME_SAMPLES_PER_CHANNEL as usize * self.channels as usize];
         let n = unsafe {
             unsafe_libopus::opus_decode_float(
                 self.ptr,

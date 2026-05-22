@@ -1,15 +1,15 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use ct2rs::{ComputeType as Ct2ComputeType, Config as Ct2Config, WhisperOptions};
 
-use crate::catalog::{model_entry, ModelInfo, CATALOG};
+use crate::catalog::{ModelInfo, ModelSpec};
 use crate::decode::decode_to_pcm16k;
 use crate::error::CadmusError;
 use crate::inference::{InferenceHandle, InferenceOutput};
-use crate::storage::{self, ensure_present};
+use crate::storage::{self, ensure_present_files};
 
 #[derive(Default)]
 pub struct LoadModelOptions {
@@ -71,24 +71,34 @@ pub enum ModelRef {
 }
 
 impl From<&str> for ModelRef {
-    fn from(s: &str) -> Self { Self::Name(s.to_string()) }
+    fn from(s: &str) -> Self {
+        Self::Name(s.to_string())
+    }
 }
 impl From<String> for ModelRef {
-    fn from(s: String) -> Self { Self::Name(s) }
+    fn from(s: String) -> Self {
+        Self::Name(s)
+    }
 }
 impl From<&Path> for ModelRef {
-    fn from(p: &Path) -> Self { Self::Path(p.to_path_buf()) }
+    fn from(p: &Path) -> Self {
+        Self::Path(p.to_path_buf())
+    }
 }
 impl From<PathBuf> for ModelRef {
-    fn from(p: PathBuf) -> Self { Self::Path(p) }
+    fn from(p: PathBuf) -> Self {
+        Self::Path(p)
+    }
 }
 
 pub struct CadmusConfig {
     pub model_cache: PathBuf,
+    pub models: Vec<ModelSpec>,
 }
 
 pub struct Cadmus {
     cache: PathBuf,
+    models: Vec<ModelSpec>,
 }
 
 impl Cadmus {
@@ -96,17 +106,24 @@ impl Cadmus {
         fs::create_dir_all(&config.model_cache).map_err(|e| {
             CadmusError::Io(format!("creating cache {:?}: {e}", config.model_cache))
         })?;
-        Ok(Self { cache: config.model_cache })
+        Ok(Self {
+            cache: config.model_cache,
+            models: config.models,
+        })
+    }
+
+    pub(crate) fn spec(&self, name: &str) -> Option<&ModelSpec> {
+        self.models.iter().find(|m| m.name == name)
     }
 
     pub fn list_available_models(&self) -> Vec<ModelInfo> {
-        CATALOG.iter().map(|e| e.to_info(&self.cache)).collect()
+        self.models.iter().map(|m| m.to_info(&self.cache)).collect()
     }
 
     pub fn find_model(&self, name: &str) -> Option<PathBuf> {
-        let entry = model_entry(name)?;
+        let spec = self.spec(name)?;
         let dir = self.cache.join(name);
-        ensure_present(entry, &dir).then_some(dir)
+        ensure_present_files(&spec.files, &dir).then_some(dir)
     }
 
     pub fn download_model(
@@ -114,16 +131,17 @@ impl Cadmus {
         name: &str,
         options: DownloadModelOptions,
     ) -> Result<PathBuf, CadmusError> {
-        let entry = model_entry(name)
+        let spec = self
+            .spec(name)
             .ok_or_else(|| CadmusError::UnknownModel(name.to_string()))?;
         let dir = self.cache.join(name);
         let cancel: Option<&AtomicBool> = options.cancel.as_deref();
         let result = match options.on_progress.as_deref() {
             Some(cb) => {
                 let adapter = move |r: u64, t: u64| cb(r, t);
-                storage::download(entry, &dir, Some(&adapter), cancel)
+                storage::download(&spec.files, &dir, Some(&adapter), cancel)
             }
-            None => storage::download(entry, &dir, None, cancel),
+            None => storage::download(&spec.files, &dir, None, cancel),
         };
         result.map_err(CadmusError::from)?;
         Ok(dir)
@@ -136,10 +154,11 @@ impl Cadmus {
     ) -> Result<CadmusModel, CadmusError> {
         let dir = match model_ref {
             ModelRef::Name(name) => {
-                let entry = model_entry(&name)
+                let spec = self
+                    .spec(&name)
                     .ok_or_else(|| CadmusError::UnknownModel(name.clone()))?;
                 let dir = self.cache.join(&name);
-                if !ensure_present(entry, &dir) {
+                if !ensure_present_files(&spec.files, &dir) {
                     return Err(CadmusError::Load(format!(
                         "model {name:?} not present in cache {:?} — call download_model first",
                         self.cache
@@ -160,7 +179,9 @@ fn load_inner(dir: &Path, options: LoadModelOptions) -> Result<CadmusModel, Cadm
         config.num_threads_per_replica = t as usize;
     }
     let handle = InferenceHandle::new_with_config(dir, config).map_err(CadmusError::from)?;
-    Ok(CadmusModel { handle: Arc::new(handle) })
+    Ok(CadmusModel {
+        handle: Arc::new(handle),
+    })
 }
 
 pub struct CadmusModel {
@@ -197,7 +218,11 @@ fn transcribe_with_handle(
     let segments: Vec<Segment> = out
         .segments
         .into_iter()
-        .map(|s| Segment { start: s.start, end: s.end, text: s.text })
+        .map(|s| Segment {
+            start: s.start,
+            end: s.end,
+            text: s.text,
+        })
         .collect();
     let text: String = segments.iter().map(|s| s.text.as_str()).collect();
     let language = options
@@ -205,7 +230,11 @@ fn transcribe_with_handle(
         .clone()
         .or(out.detected_language)
         .unwrap_or_default();
-    Ok(TranscriptResult { text, language, segments })
+    Ok(TranscriptResult {
+        text,
+        language,
+        segments,
+    })
 }
 
 pub fn transcribe(

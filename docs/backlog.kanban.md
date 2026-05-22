@@ -48,9 +48,11 @@ priority: low
 `download_model` writes downloaded files without verifying their content
 against a known checksum or signature. Definition.md §5 already states that
 download integrity is not verified; a truncated download surfaces later as
-`Load`. Adding SHA256 verification would mean shipping per-file digests in the
-catalog and matching them after download. Worth doing before v1.0 is declared
-production-grade for adversarial environments.
+`Load`. Adding SHA256 verification would mean attaching a digest to
+`FileSpec` (e.g. an optional `sha256: String` field) so both `default_models()`
+and consumer-supplied `ModelSpec`s can opt in, then matching the digest after
+each download. Worth doing before Cadmus is declared production-grade for
+adversarial environments.
 
 ### V8 finalizer / GC-driven `free()` on the JS side
 id: i84snkcejae7yr58ajcplgz9

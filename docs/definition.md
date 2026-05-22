@@ -47,17 +47,20 @@ The same concepts exist in Rust and JavaScript with idiomatic naming. Exact sign
 
 **Execution model.** The Rust core API is **blocking**: functions return their result directly. Async Rust callers wrap calls in their runtime's blocking-task primitive (`tokio::task::spawn_blocking` or equivalent). The Node bridge offloads each call to the libuv threadpool via napi-rs `AsyncTask` and returns a `Promise`. The core crate carries no executor dependency — runtime choice is the caller's, not the library's.
 
-**Factory pattern.** Cadmus is constructed once as a stateful handle (`Cadmus`) holding the explicit model-cache directory. Catalog inspection, model resolution, downloading, and loading are methods on that handle. Two operations remain free functions because they need no cache: `version()` and the one-shot `transcribe(audio, modelPath, opts)` — the latter takes a path, not a `ModelRef`, since catalog-name resolution requires a `Cadmus` handle.
+**Factory pattern.** Cadmus is constructed once as a stateful handle (`Cadmus`) holding the explicit model-cache directory **and the explicit model catalog the consumer wants to address by name**. Catalog inspection, model resolution, downloading, and loading are methods on that handle. The consumer chooses the catalog by passing `models: default_models()` (the 6 multilingual defaults Cadmus publishes) or a hand-rolled `Vec<ModelSpec>` — Cadmus does not maintain a static, baked-in catalog. Two operations remain free functions because they need no cache: `version()` and the one-shot `transcribe(audio, modelPath, opts)` — the latter takes a path, not a `ModelRef`, since catalog-name resolution requires a `Cadmus` handle.
+
+**Default catalog (`default_models()` — 6 entries, all multilingual, all float16 CT2):** `tiny`, `base`, `small`, `medium`, `large-v3`, `large-v3-turbo`. The model files come from `ctranslate2-4you/whisper-*-ct2-float16` on HuggingFace; `preprocessor_config.json` for the smallest three (`tiny`/`base`/`small`) is sourced from the upstream `openai/whisper-*` repositories because `ctranslate2-4you` ships a 15-byte placeholder for those. The English-only and distil-Whisper variants previously bundled in the static catalog are deliberately omitted — a consumer who needs them registers a custom `ModelSpec`.
 
 ### 4.1 Operations
 
 | Operation | Purpose |
 |---|---|
-| `Cadmus::new` / `new Cadmus(...)` | Construct the handle with `CadmusConfig { model_cache }`; creates the cache directory if absent. Rust returns `Result<Cadmus, CadmusError>`; JS throws `CadmusError` synchronously on failure |
-| `cadmus.list_available_models` / `listAvailableModels` | Static catalog of 17 known CTranslate2 Whisper models with size, description, family flags, and per-call `cached` status |
-| `cadmus.find_model` / `findModel` | Locate a catalog model inside the configured cache; returns the directory path if every catalog file is present with non-zero size, otherwise `None` / `null` |
-| `cadmus.download_model` / `downloadModel` | Fetch a catalog model from its HuggingFace repository into the configured cache, with optional progress callback and cooperative cancellation |
-| `cadmus.load_model` / `loadModel` | Load a CTranslate2 Whisper model into memory; accepts a `ModelRef` (catalog name resolved against the cache, or absolute path); returns a stateful `CadmusModel` |
+| `Cadmus::new` / `new Cadmus(...)` | Construct the handle with `CadmusConfig { model_cache, models }`; creates the cache directory if absent. Rust returns `Result<Cadmus, CadmusError>`; JS throws `CadmusError` synchronously on failure |
+| `default_models` / `defaultModels` (free function) | Return the 6 multilingual default `ModelSpec`s. Consumers typically pass this verbatim as `CadmusConfig.models`, or extend it with custom entries |
+| `cadmus.list_available_models` / `listAvailableModels` | Return the configured `ModelSpec`s as `ModelInfo`s with per-call `cached` status. Empty when `models: []` |
+| `cadmus.find_model` / `findModel` | Locate a configured model inside the configured cache; returns the directory path if every listed file is present with non-zero size, otherwise `None` / `null` |
+| `cadmus.download_model` / `downloadModel` | Fetch a configured model from the URLs in its `ModelSpec` into the configured cache, with optional progress callback and cooperative cancellation. Supports `https://`, `http://`, and `file://` URLs |
+| `cadmus.load_model` / `loadModel` | Load a CTranslate2 Whisper model into memory; accepts a `ModelRef` (configured name resolved against the cache, or absolute path); returns a stateful `CadmusModel` |
 | `model.transcribe` | Decode audio bytes and run inference; returns a `TranscriptResult` |
 | `transcribe` (one-shot, free function) | Convenience: load → transcribe → free, for scripts and tests. Takes an absolute model directory path, not a `ModelRef` |
 | `model.free` | Release the underlying inference instance. Mandatory on the JS side; on the Rust side `Drop` runs automatically and `free()` is also available |
@@ -69,21 +72,38 @@ The same concepts exist in Rust and JavaScript with idiomatic naming. Exact sign
 
 `Segment` — start time, end time, text. Times are in seconds. Boundaries come from Whisper's timestamp tokens, parsed out of the model output.
 
-`ModelInfo` — catalog entry shape:
+`ModelSpec` — consumer-supplied catalog entry, the unit `CadmusConfig.models` is a list of:
 
 | Field | Meaning |
 |---|---|
-| `name` | Catalog name, e.g. `tiny`, `base`, `large-v3`, `distil-large-v3.5` |
+| `name` | Lookup key used by `find_model`, `download_model`, `load_model({ name })`. Must be unique within the list |
 | `description` | One short sentence, GUI-displayable |
-| `size_bytes` / `sizeBytes` | Approximate download size in bytes |
+| `size_bytes` / `sizeBytes` | Aggregate download size in bytes. Used as the constant `total` reported to `onProgress` |
 | `family` | `Whisper` or `DistilWhisper` |
-| `multilingual` | `false` for `.en` and Distil-EN-only entries; `true` otherwise |
-| `cached` | Computed at call time: every catalog file is present in the cache with size > 0 |
-| `repo` | HuggingFace repository, e.g. `Systran/faster-whisper-base` |
-| `files` | Expected files inside the model directory; per-file repo overrides are an implementation detail |
+| `multilingual` | Caller-asserted flag; Cadmus does not validate it against the model |
+| `files` | `Vec<FileSpec>` — each file carries its own filename and full URL (`https://`, `http://`, or `file://`). Filenames must be unique within the list |
+
+`FileSpec` — one file inside a `ModelSpec`:
+
+| Field | Meaning |
+|---|---|
+| `filename` | Name under the model's cache directory |
+| `url` | Full source URL. `file://` paths are copied into the cache (never symlinked); `http(s)://` are fetched once via `ureq` |
+
+`ModelInfo` — runtime view of a configured `ModelSpec`:
+
+| Field | Meaning |
+|---|---|
+| `name` | Same as `ModelSpec.name` |
+| `description` | Same as `ModelSpec.description` |
+| `size_bytes` / `sizeBytes` | Same as `ModelSpec.size_bytes` |
+| `family` | Same as `ModelSpec.family` |
+| `multilingual` | Same as `ModelSpec.multilingual` |
+| `cached` | Computed at call time: every listed file is present in the cache with size > 0 |
+| `files` | Just the filenames from `ModelSpec.files` (URLs are not surfaced) |
 
 `ModelRef` — discriminated input for `load_model`:
-- `Name` (Rust: `&str` / String) — catalog entry resolved against the configured cache
+- `Name` (Rust: `&str` / String) — configured-spec name resolved against the configured cache
 - `Path` (Rust: `&Path` / `PathBuf`) — direct path to a model directory
 
 `LoadModelOptions` — thread count override (defaults to logical CPU count), compute type. The default `compute_type` is `Auto` — ct2rs picks based on the model. Documentation recommends `int8` for CPU users who want maximum throughput.
@@ -104,7 +124,7 @@ A single error type with discriminated variants. The npm side surfaces these as 
 | `Inference` | ct2rs returned a failure from `Whisper::generate` |
 | `Poisoned` | Internal lock poisoned by a panic on another thread; context is unusable |
 | `AlreadyFreed` | Operation called on a context after `free()` |
-| `UnknownModel` | Catalog-name lookup failed: name is not one of the 17 entries |
+| `UnknownModel` | Lookup by name failed: the name is not in this `Cadmus` instance's configured `models` list |
 | `Download` | HuggingFace download failed (cancelled, HTTP error, network, IO). Detail is collapsed into one string for surface narrowness |
 | `Io` | Filesystem error on the cache directory (cannot create, cannot read) |
 | `InvalidArgument` | Malformed `ModelRef` (both `name` and `path` set, or neither), unknown `computeType`, or other shape violations at the napi boundary |
@@ -133,7 +153,7 @@ Things callers must rely on. Things implementers must not break.
 
 **Concurrent `transcribe()` on the same context is safe.** ct2rs/CTranslate2's `ffi::Whisper` is `Send + Sync` (verified directly in `ct2rs/src/sys/whisper.rs`); `Whisper::generate` runs lock-free against an `Arc<Whisper>` clone. Verified across the napi/AsyncTask boundary by `tests/lifecycle.test.mjs` and as a Rust unit test in `src/inference.rs`.
 
-**`download_model` progress is monotonic against a constant total.** A single `download_model(name, { onProgress })` call delivers `(received, total)` events where `received` is non-decreasing and `total` stays equal to the catalog's `size_bytes` for the model across every call. The bridge accumulates committed-file bytes and clamps against the catalog total before forwarding to the JS callback.
+**`download_model` progress is monotonic against a constant total.** A single `download_model(name, { onProgress })` call delivers `(received, total)` events where `received` is non-decreasing and `total` stays equal to the configured `ModelSpec.size_bytes` for the model across every call. The bridge accumulates committed-file bytes and clamps against that total before forwarding to the JS callback. The carrier on the napi boundary is `f64`, so models above 4 GiB are reported faithfully.
 
 **Default `threads` equals logical CPU count.** Test environments running multiple contexts simultaneously must lower this explicitly via `LoadModelOptions::threads` to avoid memory pressure.
 

@@ -1,20 +1,11 @@
 use std::fs::{self, File};
 use std::io::{BufWriter, Read, Write};
-use std::path::Path;
-#[cfg(test)]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(test)]
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
-pub(crate) struct FileSpec {
-    pub repo: &'static str,
-    pub file: &'static str,
-}
-
-pub(crate) struct ModelEntry {
-    pub files: &'static [FileSpec],
-}
+use crate::catalog::FileSpec;
 
 #[derive(Debug)]
 pub(crate) enum DownloadError {
@@ -36,11 +27,6 @@ impl std::fmt::Display for DownloadError {
 }
 impl std::error::Error for DownloadError {}
 
-#[cfg(test)]
-pub(crate) const TINY: ModelEntry = ModelEntry {
-    files: crate::catalog::FILES_TINY,
-};
-
 const CHUNK_SIZE: usize = 64 * 1024;
 
 #[cfg(test)]
@@ -59,9 +45,9 @@ pub(crate) fn test_cache_lock() -> MutexGuard<'static, ()> {
         .unwrap()
 }
 
-pub(crate) fn ensure_present(entry: &ModelEntry, dir: &Path) -> bool {
-    entry.files.iter().all(|spec| {
-        let path = dir.join(spec.file);
+pub(crate) fn ensure_present_files(files: &[FileSpec], dir: &Path) -> bool {
+    files.iter().all(|spec| {
+        let path = dir.join(&spec.filename);
         fs::metadata(&path)
             .map(|m| m.is_file() && m.len() > 0)
             .unwrap_or(false)
@@ -69,7 +55,7 @@ pub(crate) fn ensure_present(entry: &ModelEntry, dir: &Path) -> bool {
 }
 
 pub(crate) fn download(
-    entry: &ModelEntry,
+    files: &[FileSpec],
     dest: &Path,
     on_progress: Option<&dyn Fn(u64, u64)>,
     cancel: Option<&AtomicBool>,
@@ -82,13 +68,11 @@ pub(crate) fn download(
 
     fs::create_dir_all(dest).map_err(|e| DownloadError::Io(e.to_string()))?;
 
-    for spec in entry.files {
-        let target = dest.join(spec.file);
+    for spec in files {
+        let target = dest.join(&spec.filename);
 
         // Idempotency at the file level: if a previous run already
-        // wrote this file with non-zero size, skip it. ensure_present()
-        // (called by callers before download) covers the all-files case;
-        // this guards against a partially completed earlier run.
+        // wrote this file with non-zero size, skip it.
         if let Ok(m) = fs::metadata(&target) {
             if m.is_file() && m.len() > 0 {
                 continue;
@@ -99,8 +83,7 @@ pub(crate) fn download(
             return Err(DownloadError::Cancelled);
         }
 
-        let url = format!("https://huggingface.co/{}/resolve/main/{}", spec.repo, spec.file);
-        fetch_one(&url, &target, on_progress, &cancelled)?;
+        fetch_one(&spec.url, &target, on_progress, &cancelled)?;
     }
 
     Ok(())
@@ -112,13 +95,6 @@ fn fetch_one(
     on_progress: Option<&dyn Fn(u64, u64)>,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<(), DownloadError> {
-    let mut response = ureq::get(url).call().map_err(|e| match &e {
-        ureq::Error::StatusCode(s) => DownloadError::Http(*s, String::new()),
-        _ => DownloadError::Network(e.to_string()),
-    })?;
-
-    let total = response.body().content_length().unwrap_or(0);
-
     // Write to a temporary `<target>.part` so an interrupted process
     // never leaves a partially written final filename. Rename on success.
     let tmp = target.with_extension(
@@ -131,13 +107,32 @@ fn fetch_one(
         let _ = fs::remove_file(&tmp);
     };
 
+    let (mut reader, total): (Box<dyn Read>, u64) =
+        if let Some(path_str) = url.strip_prefix("file://") {
+            let path = file_url_to_path(path_str)?;
+            let meta = fs::metadata(&path).map_err(|e| DownloadError::Io(e.to_string()))?;
+            if !meta.is_file() {
+                return Err(DownloadError::Io(format!("{path:?} is not a regular file")));
+            }
+            let total = meta.len();
+            let file = File::open(&path).map_err(|e| DownloadError::Io(e.to_string()))?;
+            (Box::new(file), total)
+        } else {
+            let response = ureq::get(url).call().map_err(|e| match &e {
+                ureq::Error::StatusCode(s) => DownloadError::Http(*s, String::new()),
+                _ => DownloadError::Network(e.to_string()),
+            })?;
+            let (_parts, body) = response.into_parts();
+            let total = body.content_length().unwrap_or(0);
+            (Box::new(body.into_reader()), total)
+        };
+
     let file = File::create(&tmp).map_err(|e| {
         cleanup();
         DownloadError::Io(e.to_string())
     })?;
     let mut writer = BufWriter::new(file);
 
-    let mut reader = response.body_mut().as_reader();
     let mut buf = vec![0u8; CHUNK_SIZE];
     let mut received: u64 = 0;
 
@@ -184,38 +179,90 @@ fn fetch_one(
     Ok(())
 }
 
+fn percent_decode(s: &str) -> Result<String, DownloadError> {
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let h1 = (bytes[i + 1] as char).to_digit(16);
+            let h2 = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(a), Some(b)) = (h1, h2) {
+                out.push(((a << 4) | b) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(out)
+        .map_err(|e| DownloadError::Io(format!("invalid utf-8 in file:// path: {e}")))
+}
+
+#[cfg(windows)]
+fn file_url_to_path(s: &str) -> Result<PathBuf, DownloadError> {
+    let decoded = percent_decode(s)?;
+    // file:///C:/foo -> /C:/foo -> C:/foo
+    let trimmed = decoded
+        .strip_prefix('/')
+        .filter(|rest| {
+            rest.chars().nth(1) == Some(':')
+                && rest.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+        })
+        .map(str::to_string)
+        .unwrap_or(decoded);
+    Ok(PathBuf::from(trimmed))
+}
+
+#[cfg(not(windows))]
+fn file_url_to_path(s: &str) -> Result<PathBuf, DownloadError> {
+    Ok(PathBuf::from(percent_decode(s)?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::catalog::default_models;
     use std::net::TcpListener;
     use std::sync::Mutex;
     use std::sync::atomic::AtomicBool;
     use std::thread;
     use std::time::Duration;
 
-    // Live HuggingFace smoke (Concept Plan 3 "Done when": real fetch
-    // path exercised end-to-end). Pulls ~75 MB on first run; subsequent
-    // runs on the same target/ are instant because every file is
-    // present with size > 0.
+    fn tiny_files() -> Vec<FileSpec> {
+        default_models()
+            .into_iter()
+            .find(|m| m.name == "tiny")
+            .expect("default_models missing tiny")
+            .files
+    }
+
+    // Live HuggingFace smoke. Pulls ~75 MB on first run; subsequent runs on
+    // the same target/ are instant because every file is present with size > 0.
     #[test]
     fn download_tiny_smoke() {
         let _guard = test_cache_lock();
         let dir = test_cache_dir().join("tiny");
-        download(&TINY, &dir, None, None).expect("first download failed");
-        assert!(ensure_present(&TINY, &dir), "files missing after download");
+        let files = tiny_files();
+        download(&files, &dir, None, None).expect("first download failed");
+        assert!(
+            ensure_present_files(&files, &dir),
+            "files missing after download"
+        );
 
         // Second invocation must not re-download. Per-file fast path skips
-        // each file. We can't observe the skip directly, but ensure_present
-        // remains true and the call returns Ok.
-        download(&TINY, &dir, None, None).expect("second download failed");
-        assert!(ensure_present(&TINY, &dir));
+        // each file. ensure_present_files remains true and the call returns Ok.
+        download(&files, &dir, None, None).expect("second download failed");
+        assert!(ensure_present_files(&files, &dir));
     }
 
     #[test]
     fn cancel_before_call_returns_cancelled() {
         let dir = test_cache_dir().join("never-touched-cancelled-target");
         let cancel = AtomicBool::new(true);
-        let result = download(&TINY, &dir, None, Some(&cancel));
+        let files = tiny_files();
+        let result = download(&files, &dir, None, Some(&cancel));
         assert!(matches!(result, Err(DownloadError::Cancelled)));
         let empty_or_absent = !dir.exists()
             || dir
@@ -230,20 +277,21 @@ mod tests {
         let temp = test_cache_dir().join("ensure-present-fixture");
         let _ = fs::remove_dir_all(&temp);
         fs::create_dir_all(&temp).unwrap();
+        let files = tiny_files();
 
-        assert!(!ensure_present(&TINY, &temp)); // missing → false
+        assert!(!ensure_present_files(&files, &temp)); // missing → false
 
-        for spec in TINY.files {
+        for spec in &files {
             // zero-byte → false
-            File::create(temp.join(spec.file)).unwrap();
+            File::create(temp.join(&spec.filename)).unwrap();
         }
-        assert!(!ensure_present(&TINY, &temp));
+        assert!(!ensure_present_files(&files, &temp));
 
-        for spec in TINY.files {
+        for spec in &files {
             // size > 0 → true
-            fs::write(temp.join(spec.file), b"x").unwrap();
+            fs::write(temp.join(&spec.filename), b"x").unwrap();
         }
-        assert!(ensure_present(&TINY, &temp));
+        assert!(ensure_present_files(&files, &temp));
     }
 
     #[test]
@@ -335,5 +383,61 @@ mod tests {
         assert!(!target.exists(), "final file should not exist on cancel");
 
         let _ = server.join();
+    }
+
+    #[test]
+    fn percent_decode_basic() {
+        assert_eq!(percent_decode("/foo/bar").unwrap(), "/foo/bar");
+        assert_eq!(
+            percent_decode("/foo/with%20space").unwrap(),
+            "/foo/with space"
+        );
+        // Malformed escape: pass `%` through literally.
+        assert_eq!(percent_decode("/foo/100%").unwrap(), "/foo/100%");
+        assert_eq!(percent_decode("/a/%C3%A9").unwrap(), "/a/é");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn file_url_to_path_unix() {
+        assert_eq!(
+            file_url_to_path("/foo/bar").unwrap(),
+            PathBuf::from("/foo/bar")
+        );
+        assert_eq!(
+            file_url_to_path("/foo/with%20space").unwrap(),
+            PathBuf::from("/foo/with space")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn file_url_to_path_windows_drive_letter() {
+        assert_eq!(
+            file_url_to_path("/C:/foo/bar").unwrap(),
+            PathBuf::from("C:/foo/bar")
+        );
+        assert_eq!(
+            file_url_to_path("/C:/with%20space").unwrap(),
+            PathBuf::from("C:/with space")
+        );
+    }
+
+    #[test]
+    fn fetch_one_file_url_copies_local_file() {
+        let temp = test_cache_dir().join("file-url-fixture");
+        let _ = fs::remove_dir_all(&temp);
+        fs::create_dir_all(&temp).unwrap();
+        let src = temp.join("source.bin");
+        let payload: Vec<u8> = (0u8..=255).cycle().take(8192).collect();
+        fs::write(&src, &payload).unwrap();
+
+        let target = temp.join("dest.bin");
+        let url = format!("file://{}", src.to_string_lossy());
+        let no_cancel = || false;
+        fetch_one(&url, &target, None, &no_cancel).expect("file:// fetch failed");
+
+        let got = fs::read(&target).unwrap();
+        assert_eq!(got, payload, "file copy differs from source");
     }
 }

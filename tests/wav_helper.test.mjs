@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { Cadmus } from '../index.js';
-import { sharedCache, ensureTinyDownloaded } from './_helpers/cache.mjs';
+import { defaultCadmusConfig, ensureTinyDownloaded } from './_helpers/cache.mjs';
 import { padWavWithSilence } from './_helpers/wav.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -16,7 +16,7 @@ test('padWavWithSilence produces a transcribable WAV', async () => {
   // A 5 s WAV = ~5 × 44.1k × 2 bytes mono = ~440 kB. Sanity-check.
   assert.ok(padded.length > fixtureWav.length, 'padded WAV is not larger');
 
-  const cadmus = new Cadmus({ modelCache: sharedCache() });
+  const cadmus = new Cadmus(defaultCadmusConfig());
   await ensureTinyDownloaded(cadmus);
   const model = await cadmus.loadModel({ name: 'tiny' });
   try {
