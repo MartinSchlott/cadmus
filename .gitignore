@@ -51,3 +51,5 @@ node_modules/
 .agents/skills/architect/SKILL.md
 .claude/skills/architect-review/SKILL.md
 .claude/skills/architect/SKILL.md
+.agents/skills/readme-lib-for-llms/SKILL.md
+.claude/skills/readme-lib-for-llms/SKILL.md
