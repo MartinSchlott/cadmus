@@ -1,9 +1,10 @@
 name: Release
 
-# Manual, one-button release. Trigger from the GitHub Actions UI ("Run workflow")
-# or via `npm run release` / `npm run release:minor` / `npm run release:major`
-# (which call `gh workflow run`). The workflow builds the prebuilt `.node` for all
-# three platforms, bumps the npm version, commits the binaries, tags, and publishes.
+# Release workflow: builds Linux x86_64 and Windows x86_64 prebuilt `.node` binaries on
+# hosted runners. The darwin-arm64 binary is built locally by `scripts/release.mjs`, which
+# pushes it to main and then triggers this workflow via `npm run release` /
+# `npm run release:minor` / `npm run release:major`. Bumps the npm version, commits all
+# three binaries (the macOS one already in the tree), tags, and publishes.
 on:
   workflow_dispatch:
     inputs:
@@ -29,14 +30,11 @@ jobs:
   build:
     name: Build ${{ matrix.target }}
     strategy:
-      # Surface all three results — a Windows failure should not hide the
-      # macOS/Linux outcome. `publish` still requires every leg to be green.
+      # Surface both results — a Windows failure should not hide the Linux outcome.
+      # `publish` still requires every leg to be green.
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
-            target: darwin-arm64
-            artifact: cadmus.darwin-arm64.node
           - os: ubuntu-latest
             target: linux-x64-gnu
             artifact: cadmus.linux-x64-gnu.node
@@ -46,10 +44,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
-
-      - name: Install CMake (macOS)
-        if: runner.os == 'macOS'
-        run: brew list cmake >/dev/null 2>&1 || brew install cmake
 
       - name: Set up MSVC environment (Windows)
         if: runner.os == 'Windows'

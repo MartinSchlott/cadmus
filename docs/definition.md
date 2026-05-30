@@ -161,8 +161,6 @@ Things callers must rely on. Things implementers must not break.
 
 Stated explicitly so future contributors do not assume otherwise. All deferred items are tracked as cards in `docs/backlog.kanban.md`.
 
-- Linux x86_64 build itself — v1.0.0 ships macOS arm64 only; Linux is wired in `Cargo.toml` / `package.json` / `index.ts` but the binary is not yet committed. Backlog: "Linux x86_64 follow-up build" (Open).
-- Windows x86_64 build (`x86_64-pc-windows-msvc`).
 - Linux-arm64 and macOS-x64 builds.
 - GPU inference (CUDA, Metal, Vulkan).
 - Streaming transcription / real-time partial results.
@@ -172,13 +170,12 @@ Stated explicitly so future contributors do not assume otherwise. All deferred i
 - HTTP Range / resume on `download_model`.
 - Auto-`free` via V8 finalizer on the JS side.
 - Word error rate guarantees — accuracy is CTranslate2 + Whisper's responsibility, not Cadmus's.
-- GitHub Actions / CI matrix — v1 verification is local on each build host (see `architecture.md §6`).
 
 ## 7. Success Criteria
 
 The product is successful when:
 
 1. A Rust application adds `cadmus` to `Cargo.toml` and transcribes audio bytes without any system dependency beyond a C++ toolchain and CMake at build time, plus Apple Accelerate (where the OS provides it) at runtime.
-2. A Node.js or Electron application runs `npm install @ai-inquisitor/cadmus` on macOS arm64 (and Linux x64 once the follow-up build lands) and transcribes audio without a Rust toolchain, Python, FFmpeg, or a separate BLAS install.
-3. The bundled fixture (`fixtures/eins-zwei-drei.mp3`) transcribes locally on each supported build host and asserts the result contains the expected words. Verification is manual per the Release Runbook (`docs/archive/CONCEPT_v1_buildout.md` Release Runbook, retained for reference) — no CI matrix.
+2. A Node.js or Electron application runs `npm install @ai-inquisitor/cadmus` on macOS arm64, Linux x86_64, or Windows x86_64 and transcribes audio without a Rust toolchain, Python, FFmpeg, or a separate BLAS install.
+3. The bundled fixture (`fixtures/eins-zwei-drei.mp3`) transcribes locally on each supported build host and asserts the result contains the expected words. The `cargo test` / `npm test` suites run on each developer machine; the `Release` workflow (`.github/workflows/release.yml`) builds `linux-x64-gnu` and `win32-x64-msvc` on GitHub-hosted runners while `darwin-arm64` is built locally by `scripts/release.mjs` on the Product Owner's Mac.
 4. The npm `.node` binary loads in Electron renderer or main process without additional native module configuration beyond standard napi-rs conventions.

@@ -1,6 +1,6 @@
 {
   "name": "@ai-inquisitor/cadmus",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "description": "CTranslate2-based Whisper transcription with prebuilt napi-rs binaries.",
   "license": "MIT",
   "repository": {
@@ -41,9 +41,9 @@
     "build:ts": "tsc",
     "build": "npm run build:napi && npm run build:ts",
     "test": "node --test --test-concurrency=1 tests/*.test.mjs",
-    "release": "gh workflow run release.yml --field bump=patch",
-    "release:minor": "gh workflow run release.yml --field bump=minor",
-    "release:major": "gh workflow run release.yml --field bump=major"
+    "release": "node scripts/release.mjs patch",
+    "release:minor": "node scripts/release.mjs minor",
+    "release:major": "node scripts/release.mjs major"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.6.2",

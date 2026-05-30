@@ -159,7 +159,7 @@ await cadmus.downloadModel('tiny-local')  // copies the file:// files into the c
 
 ## Platforms
 
-Cadmus ships prebuilt `.node` binaries for three platforms, all built and published by the `Release` GitHub Actions workflow:
+Cadmus ships prebuilt `.node` binaries for three platforms. Linux x86_64 and Windows x86_64 are built by the `Release` GitHub Actions workflow on hosted runners; macOS arm64 is built locally by `scripts/release.mjs` and pushed to `main` ahead of the workflow run:
 
 - **macOS arm64** (`aarch64-apple-darwin`) — Apple Accelerate + ruy
 - **Linux x86_64** (`x86_64-unknown-linux-gnu`) — oneMKL + DNNL + compiler OpenMP
@@ -185,7 +185,7 @@ The first `cargo build --features napi` triggers ct2rs's CMake build of CTransla
 
 `cargo test` (no features) and `cargo test --features napi` are both part of release verification — the integration tests in `tests/public_api.rs` are gated `#![cfg(not(feature = "napi"))]` because the napi-flavoured rlib references N-API symbols that only resolve inside Node. See [`docs/architecture.md §8`](docs/architecture.md) for the full test layout.
 
-Releases are automated. The `Release` workflow ([`.github/workflows/release.yml`](.github/workflows/release.yml)) builds the `.node` for all three platforms on GitHub-hosted runners, bumps the npm version, commits the binaries, tags, and runs `npm publish --provenance`. Trigger it from the Actions UI or with `npm run release` / `npm run release:minor` / `npm run release:major`. The original manual six-step runbook is kept for reference in [`docs/archive/CONCEPT_v1_buildout.md`](docs/archive/CONCEPT_v1_buildout.md).
+Releases use a hybrid model. Run `npm run release` / `npm run release:minor` / `npm run release:major`: `scripts/release.mjs` builds `cadmus.darwin-arm64.node` locally on the developer's Mac, pushes it to `main`, and then triggers the `Release` workflow ([`.github/workflows/release.yml`](.github/workflows/release.yml)), which builds the remaining two binaries on hosted runners, bumps the npm version, commits all three binaries, tags, and runs `npm publish --provenance`. The original manual six-step runbook is kept for reference in [`docs/archive/CONCEPT_v1_buildout.md`](docs/archive/CONCEPT_v1_buildout.md).
 
 ## Out of Scope (v1)
 
@@ -263,8 +263,8 @@ Default `threads` equals logical CPU count. Test environments running multiple c
 
 `TranscribeOptions::threads` is intentionally absent. ct2rs 0.9.18 has no per-call thread override — threading lives on `Config::num_threads_per_replica`, set when `Whisper::new` is called and fixed for the life of the instance. `LoadModelOptions::threads` is the only thread knob. Documented as `severity: accepted` in `docs/bug.kanban.md`.
 
-Cadmus ships prebuilt `.node` binaries for three platforms — macOS arm64, Linux x86_64, and Windows x86_64. Each is built by the `Release` workflow on its native GitHub-hosted runner; cross-compilation is not used. Linux-arm64, macOS-x64, and GPU variants remain out of scope and are tracked in `docs/backlog.kanban.md`.
+Cadmus ships prebuilt `.node` binaries for three platforms — macOS arm64, Linux x86_64, and Windows x86_64. Each is built on its native host — Linux and Windows on GitHub-hosted runners, macOS on the developer's local machine — and cross-compilation is not used. Linux-arm64, macOS-x64, and GPU variants remain out of scope and are tracked in `docs/backlog.kanban.md`.
 
-Releases run through GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)): a manual `workflow_dispatch` builds all three binaries, bumps the version, commits the binaries, tags, and publishes to npm with provenance. The per-platform ct2rs feature subsets in `Cargo.toml`, the `package.json.files` allowlist, and the `index.ts` platform dispatch are the three places a new target must be wired.
+Releases use a hybrid model: `npm run release` (or `release:minor` / `release:major`) delegates to `scripts/release.mjs`, which builds `cadmus.darwin-arm64.node` locally on the Product Owner's Mac, pushes it to `main`, and then triggers the `Release` workflow ([`.github/workflows/release.yml`](.github/workflows/release.yml)). The workflow builds the remaining two binaries (`linux-x64-gnu` on Ubuntu, `win32-x64-msvc` on Windows), bumps the npm version, commits all three binaries, tags, and publishes to npm with provenance. The per-platform ct2rs feature subsets in `Cargo.toml`, the `package.json.files` allowlist, and the `index.ts` platform dispatch are the three places a new target must be wired.
 
 Single Cargo crate, no workspace. Rust consumers add `cadmus` as a git dependency (not yet on crates.io) and never compile napi-rs. Node consumers `npm install @ai-inquisitor/cadmus` and never compile Rust. The Rust source tarball (`cargo package`) contains Rust source only; the npm tarball contains the prebuilt `.node` binaries plus a tiny TS/JS surface — see the packaging-allowlist invariant above.

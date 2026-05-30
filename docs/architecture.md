@@ -52,7 +52,7 @@ A single Cargo crate at the repository root. `[lib] crate-type = ["cdylib", "lib
 ├── Cargo.toml                      # single crate; [package].include allowlist;
 │                                   #   [lib] crate-type = ["cdylib", "lib"];
 │                                   #   [features] napi = ["dep:napi", "dep:napi-derive"];
-│                                   #   per-target ct2rs feature subsets (macOS / Linux)
+│                                   #   per-target ct2rs feature subsets (macOS / Linux / Windows)
 ├── Cargo.lock                      # committed
 ├── build.rs                        # gates napi_build::setup() on CARGO_FEATURE_NAPI
 ├── package.json                    # @ai-inquisitor/cadmus; files allowlist; type: module
@@ -65,9 +65,11 @@ A single Cargo crate at the repository root. `[lib] crate-type = ["cdylib", "lib
 ├── LICENSE                         # MIT, Copyright (c) 2026 Martin Schlott
 ├── LICENSE-THIRD-PARTY             # symphonia (MPL-2.0), libopus via unsafe-libopus (BSD-3-Clause)
 ├── README.md
-├── cadmus.darwin-arm64.node        # prebuilt; committed; produced by `napi build` on macOS
-├── cadmus.linux-x64-gnu.node       # prebuilt; committed by the Linux follow-up
-│                                   #   (see docs/backlog.kanban.md)
+├── cadmus.darwin-arm64.node        # prebuilt; committed; built locally via scripts/release.mjs
+├── cadmus.linux-x64-gnu.node       # prebuilt; committed; built on GitHub-hosted runner (ubuntu-latest)
+├── cadmus.win32-x64-msvc.node      # prebuilt; committed; built on GitHub-hosted runner (windows-latest)
+├── scripts/
+│   └── release.mjs                 # local release driver: builds darwin-arm64, pushes, triggers CI
 ├── src/
 │   ├── lib.rs                      # public Rust API + #[cfg(feature = "napi")] bridge re-exports
 │   ├── api.rs                      # Cadmus, CadmusModel, ModelRef, options structs, transcribe one-shot
@@ -106,9 +108,9 @@ A single Cargo crate at the repository root. `[lib] crate-type = ["cdylib", "lib
 Two artifacts ship from this single root:
 
 - **Rust source tarball** (`cargo package`) — `Cargo.toml` declares an explicit `[package].include` allowlist (`/Cargo.toml`, `/Cargo.lock`, `/build.rs`, `/src/**/*.rs`, `/tests/**/*.rs`, `/fixtures/**`, `/LICENSE`, `/LICENSE-THIRD-PARTY`, `/README.md`). Patterns are root-anchored (leading `/`) — without anchoring, gitignore-glob semantics would pull `node_modules/**/LICENSE` into the tarball. Everything else (`package.json`, `index.ts`, `*.node`, etc.) is excluded.
-- **npm tarball** — `package.json.files` lists exactly `index.js`, `index.d.ts`, `types.js`, `types.d.ts`, both `.node` files, `LICENSE`, `LICENSE-THIRD-PARTY`, `README.md`. Rust source is excluded.
+- **npm tarball** — `package.json.files` lists exactly `index.js`, `index.d.ts`, `types.js`, `types.d.ts`, all three `.node` files, `LICENSE`, `LICENSE-THIRD-PARTY`, `README.md`. Rust source is excluded.
 
-Net result: the Rust consumer pulls source via a git dependency. The npm consumer pulls the prebuilt binaries plus a tiny TS/JS surface. Neither artifact ships the other ecosystem's noise. Verification is part of the Release Runbook (see `docs/archive/CONCEPT_v1_buildout.md`).
+Net result: the Rust consumer pulls source via a git dependency. The npm consumer pulls the prebuilt binaries plus a tiny TS/JS surface. Neither artifact ships the other ecosystem's noise. Verification runs locally via `cargo test` / `npm test` and, for the Linux and Windows build legs, via the `Release` workflow (`.github/workflows/release.yml`).
 
 There is **no** workspace, no separate `cadmus-node/` crate, no `npm/` subdirectory, no whisper.cpp submodule, no own `build.rs` driving cmake-rs, no FFI module. CTranslate2's build is owned by `ct2rs`'s build script — it is invoked transitively by `cargo build`.
 
@@ -223,9 +225,13 @@ The npm artifact is produced by `napi build --release --platform --no-js --dts n
 
 CMake and a C++ toolchain are required at build time on the developer's machine. Consumers of the prebuilt npm binaries do not need them.
 
-### Verification is local, not CI
+### Release Pipeline
 
-There are no GitHub Actions workflows. Verification is manual on each build host, run before each release per the Release Runbook recorded in `docs/archive/CONCEPT_v1_buildout.md`. The cost of CI maintenance was deferred until adoption justifies it; reactivation is tracked in `docs/backlog.kanban.md` ("GitHub Actions / CI matrix migration"). None of the v1 build decisions block CI migration — the same six-step runbook becomes a workflow file when needed.
+The `Release` workflow (`.github/workflows/release.yml`) is the publish path, triggered by `npm run release` / `release:minor` / `release:major`.
+
+`scripts/release.mjs` drives the local half before the workflow fires. It enforces three pre-flight invariants (clean working tree, on `main`, in sync with `origin/main`), then runs `napi build --release` to produce `cadmus.darwin-arm64.node` on the Product Owner's Apple-Silicon Mac, commits the binary if it changed, and pushes to `main`. Only then does it call `gh workflow run release.yml`. The macOS build is intentionally local to avoid the `macos-latest` 10× billing multiplier on GitHub-hosted runners.
+
+The workflow builds only the two remaining legs: `cadmus.linux-x64-gnu.node` (Ubuntu runner) and `cadmus.win32-x64-msvc.node` (Windows runner). After both build legs complete, the `publish` job checks out the latest `main` (which already contains the locally-pushed `darwin-arm64` binary), bumps the npm version, commits all three binaries together with the version bump, tags, and publishes to npm with provenance.
 
 ---
 
@@ -233,8 +239,9 @@ There are no GitHub Actions workflows. Verification is manual on each build host
 
 | Rust triple | npm package suffix | Build host | ct2rs backend features |
 |---|---|---|---|
-| `aarch64-apple-darwin` | `-darwin-arm64` | developer's macOS (Apple Silicon) | `whisper`, `accelerate`, `ruy` |
-| `x86_64-unknown-linux-gnu` | `-linux-x64-gnu` | developer's Linux (separate machine) | `whisper`, `mkl`, `dnnl`, `openmp-runtime-comp` |
+| `aarch64-apple-darwin` | `-darwin-arm64` | developer's macOS (Apple Silicon), via `scripts/release.mjs` | `whisper`, `accelerate`, `ruy` |
+| `x86_64-unknown-linux-gnu` | `-linux-x64-gnu` | GitHub-hosted runner (`ubuntu-latest`) | `whisper`, `mkl`, `dnnl`, `openmp-runtime-comp` |
+| `x86_64-pc-windows-msvc` | `-win32-x64-msvc` | GitHub-hosted runner (`windows-latest`) | `whisper`, `dnnl` |
 
 These feature sets are a **CPU-only subset** of what ct2rs's per-platform default features include. Cadmus disables `default-features` on the `ct2rs` dependency and enables only the features listed above. ct2rs's own defaults additionally include `cuda`, `cudnn`, and `cuda-dynamic-loading`; those are deliberately excluded to honour the v1 "no CUDA, no GPU" promise from [definition.md §3](definition.md). Re-introducing GPU features is a deliberate post-v1 decision, not an accidental result of accepting upstream defaults.
 
@@ -246,9 +253,12 @@ ct2rs = { version = "=0.9.18", default-features = false, features = ["whisper", 
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ct2rs = { version = "=0.9.18", default-features = false, features = ["whisper", "mkl", "dnnl", "openmp-runtime-comp"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+ct2rs = { version = "=0.9.18", default-features = false, features = ["whisper", "dnnl"] }
 ```
 
-Windows (`x86_64-pc-windows-msvc`), Linux-arm64, and macOS-x64 are deferred — see `docs/backlog.kanban.md`.
+Linux-arm64 and macOS-x64 are deferred — see `docs/backlog.kanban.md`.
 
 ---
 

@@ -300,6 +300,11 @@ commits the binaries, tags, and runs `npm publish --provenance`. Triggered from
 the Actions UI or via `npm run release` / `release:minor` / `release:major`. The
 repository was made public, so Actions minutes are unmetered.
 
+Note for future readers: the `darwin-arm64` leg was subsequently moved off
+hosted runners. It now builds locally via `scripts/release.mjs`, which pushes
+the binary to `main` before triggering the workflow — keeping the macOS
+`macos-latest` 10× billing multiplier off the bill.
+
 ### Linux x86_64 follow-up build
 id: ggjoacipz9pvwfmwn1evjsp1
 priority: medium
